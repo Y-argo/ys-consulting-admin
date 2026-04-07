@@ -15346,6 +15346,13 @@ ASCEND は、利用ログや評価情報をもとに**内部モデルを継続�
                     st.session_state.pop("_logout_in_progress", None)
                     st.rerun()
             st.divider()
+            try:
+                _cr_docs = list(db.collection("contact_requests").where("is_read", "==", False).stream())
+                _cr_unread = len(_cr_docs)
+            except Exception:
+                _cr_unread = 0
+            if _cr_unread > 0:
+                st.error(f"📩 お問い合わせ未読: {_cr_unread} 件")
             st.markdown("**管理メニュー**")
             admin_menu = st.radio(
                 "管理メニュー",
@@ -15368,6 +15375,7 @@ ASCEND は、利用ログや評価情報をもとに**内部モデルを継続�
                     "💬 個人相談管理",
                     "📉 投資シグナル",
                     "🎨 テーマ設定",
+                    "📩 お問い合わせ",
                 ],
                 horizontal=False,
                 key="admin_main_menu"
@@ -23949,6 +23957,42 @@ try:
                     st.rerun()
                 except Exception as _e:
                     st.error(f"保存エラー: {_e}")
+        elif admin_menu == "📩 お問い合わせ":
+            st.subheader("📩 お問い合わせ管理")
+            try:
+                _ct_docs = list(db.collection("contact_requests").stream())
+                _ct_items = []
+                for _cd in _ct_docs:
+                    _cdata = _cd.to_dict() or {}
+                    _ct_items.append({
+                        "doc_id": _cd.id,
+                        "name": _cdata.get("name", ""),
+                        "message": _cdata.get("message", ""),
+                        "is_read": _cdata.get("is_read", False),
+                        "created_at": str(_cdata.get("created_at", "")),
+                    })
+                _ct_items.sort(key=lambda x: x["created_at"], reverse=True)
+                if not _ct_items:
+                    st.info("お問い合わせはまだありません。")
+                else:
+                    _unread_ct = [x for x in _ct_items if not x["is_read"]]
+                    _read_ct   = [x for x in _ct_items if x["is_read"]]
+                    if _unread_ct:
+                        st.markdown(f"### 未読 ({len(_unread_ct)}件)")
+                        for _ci in _unread_ct:
+                            with st.expander(f"【未読】{_ci['name']} — {_ci['created_at'][:10]}"):
+                                st.write(_ci["message"])
+                                if st.button("既読にする", key=f"read_{_ci['doc_id']}"):
+                                    db.collection("contact_requests").document(_ci["doc_id"]).update({"is_read": True})
+                                    st.success("既読にしました")
+                                    st.rerun()
+                    if _read_ct:
+                        st.markdown(f"### 既読 ({len(_read_ct)}件)")
+                        for _ci in _read_ct:
+                            with st.expander(f"【既読】{_ci['name']} — {_ci['created_at'][:10]}"):
+                                st.write(_ci["message"])
+            except Exception as _ce:
+                st.error(f"取得エラー: {_ce}")
         elif admin_menu == "📉 投資シグナル":
             st.subheader("📉 投資シグナル（大口売り込み・反発候補）")
 
