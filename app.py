@@ -1847,20 +1847,28 @@ def get_user_doc(uid: str):
 def upsert_user(uid: str, password: str, tenant_id: str, is_active: bool = True):
     fs_guard()
     salt_b64, hash_b64, iters = make_pw_hash(password)
-    users_col().document(uid).set(
-        {
-            "uid": uid,
-            "tenant_id": tenant_id or DEFAULT_TENANT,
-            "pw_salt": salt_b64,
-            "pw_hash": hash_b64,
-            "pw_iters": iters,
-            "is_active": bool(is_active),
-            "created_at": firestore.SERVER_TIMESTAMP,
-            "last_login": None,
-            "updated_at": firestore.SERVER_TIMESTAMP,
-        },
-        merge=True,
-    )
+    # 新規作成時のみ初期有効期限7日間を設定（既存ユーザー更新時は上書きしない）
+    _existing = users_col().document(uid).get()
+    _is_new = not _existing.exists
+    _init_expires = ""
+    if _is_new:
+        import datetime as _dt_upsert
+        _init_expires = str(_dt_upsert.date.today() + _dt_upsert.timedelta(days=7))
+    _upsert_data = {
+        "uid": uid,
+        "tenant_id": tenant_id or DEFAULT_TENANT,
+        "pw_salt": salt_b64,
+        "pw_hash": hash_b64,
+        "pw_iters": iters,
+        "is_active": bool(is_active),
+        "created_at": firestore.SERVER_TIMESTAMP,
+        "last_login": None,
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    }
+    if _is_new:
+        _upsert_data["expires_at"] = _init_expires
+        _upsert_data["is_unlimited"] = False
+    users_col().document(uid).set(_upsert_data, merge=True)
 
 def set_user_active(uid: str, active: bool):
     fs_guard()
@@ -15806,6 +15814,40 @@ ASCEND は、利用ログや評価情報をもとに**内部モデルを継続�
         else:
             st.caption("認証")
             st.write(f"状態: **{authed_role()} / {authed_uid()}**")
+            # 利用有効期限を常時表示
+            try:
+                _sb_uid = authed_uid()
+                _sb_doc = users_col().document(_sb_uid).get()
+                _sb_data = _sb_doc.to_dict() if _sb_doc.exists else {}
+                _sb_unlimited = bool(_sb_data.get("is_unlimited", False))
+                _sb_exp = str(_sb_data.get("expires_at", "")).strip()
+                if _sb_unlimited:
+                    _sb_exp_label = "無期限"
+                    _sb_color = "#22c55e"
+                elif _sb_exp:
+                    import datetime as _dt_sb
+                    _sb_exp_date = _dt_sb.date.fromisoformat(_sb_exp[:10])
+                    _sb_days_left = (_sb_exp_date - _dt_sb.date.today()).days
+                    if _sb_days_left < 0:
+                        _sb_exp_label = f"失効（{_sb_exp[:10]}）"
+                        _sb_color = "#ef4444"
+                    elif _sb_days_left <= 3:
+                        _sb_exp_label = f"{_sb_exp[:10]}（残{_sb_days_left}日）"
+                        _sb_color = "#f97316"
+                    else:
+                        _sb_exp_label = f"{_sb_exp[:10]}（残{_sb_days_left}日）"
+                        _sb_color = "#6b7280"
+                else:
+                    _sb_exp_label = "未設定"
+                    _sb_color = "#6b7280"
+                st.markdown(
+                    f'<div style="font-size:0.72rem;color:{_sb_color};background:rgba(0,0,0,0.03);'
+                    f'border-radius:6px;padding:6px 10px;margin-bottom:6px;">'
+                    f'📅 利用有効期限: <b>{_sb_exp_label}</b></div>',
+                    unsafe_allow_html=True,
+                )
+            except Exception:
+                pass
             if st.button("ログアウト", use_container_width=True, key="user_logout_btn"):
                 if not st.session_state.get("_logout_in_progress"):
                     st.session_state["_logout_in_progress"] = True
@@ -15832,11 +15874,27 @@ ASCEND は、利用ログや評価情報をもとに**内部モデルを継続�
                 _ck_uid_val  = cookies.get(CK_UID, "")
                 _ck_exp_val  = cookies.get(CK_EXP, "")
                 _ck_role_val = cookies.get(CK_ROLE, "")
+                # 利用有効期限（expires_at）をFirestoreから取得
+                _acct_exp_val = ""
+                try:
+                    _acct_doc = users_col().document(_ck_uid_val).get()
+                    _acct_data = _acct_doc.to_dict() if _acct_doc.exists else {}
+                    _acct_exp_raw = _acct_data.get("expires_at", "")
+                    _is_unlimited = _acct_data.get("is_unlimited", False)
+                    if _is_unlimited:
+                        _acct_exp_val = "無期限"
+                    elif _acct_exp_raw:
+                        _acct_exp_val = str(_acct_exp_raw)[:10]
+                    else:
+                        _acct_exp_val = "未設定"
+                except Exception:
+                    _acct_exp_val = "取得失敗"
                 st.markdown(
                     f'<div style="font-size:0.72rem;color:#9ca3af;background:#f9fafb;border-radius:6px;padding:8px 10px;line-height:1.8;">'
                     f'🔑 UID: <code>{_ck_uid_val or "—"}</code><br>'
                     f'🎭 Role: <code>{_ck_role_val or "—"}</code><br>'
-                    f'⏱ 有効期限: <code>{_ck_exp_val[:16] if _ck_exp_val else "—"}</code>'
+                    f'⏱ セッション期限: <code>{_ck_exp_val[:16] if _ck_exp_val else "—"}</code><br>'
+                    f'📅 利用有効期限: <code>{_acct_exp_val}</code>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
@@ -18168,6 +18226,7 @@ try:
 
             st.divider()
             st.write("### 新規ユーザー発行 / 更新")
+            st.caption("⚠️ 新規作成時の初期有効期限は **7日間** です。期限は発行後にスコアリセット/期限設定から変更してください。")
             tenants = list_tenants(include_disabled=False)
             tenant_opts = [t["tenant_id"] for t in tenants]
 
@@ -18467,18 +18526,64 @@ try:
                         except Exception as _sre:
                             st.error(f"リセット失敗: {_sre}")
                 with _sr_col2:
-                    with st.form(key="expires_set_form", clear_on_submit=True):
-                        _ex_uid = st.selectbox("対象ユーザー", df_users["uid"].tolist(), key="ex_uid_sel")
-                        _ex_date = st.date_input("有効期限（日付）", value=None, key="ex_date_input")
-                        _ex_btn = st.form_submit_button("📅 期限を設定", use_container_width=True)
-                    if _ex_btn:
+                    _ex_uid = st.selectbox("対象ユーザー", df_users["uid"].tolist(), key="ex_uid_sel")
+                    _ex_doc = get_user_doc(_ex_uid)
+                    _ex_data = _ex_doc.to_dict() if _ex_doc.exists else {}
+                    _ex_current = _ex_data.get("expires_at", "")
+                    _ex_is_unlimited = bool(_ex_data.get("is_unlimited", False))
+                    if _ex_is_unlimited:
+                        st.caption("現在の有効期限: **無期限**")
+                    elif _ex_current:
+                        st.caption(f"現在の有効期限: **{_ex_current}**")
+                    else:
+                        st.caption("現在の有効期限: **未設定**")
+                    import datetime as _dt_ex
+                    _ex_mode = st.radio(
+                        "設定方法",
+                        ["無期限", "日数指定", "日付指定", "解除"],
+                        horizontal=True,
+                        key="ex_mode_radio",
+                    )
+                    _ex_days = None
+                    _ex_date = None
+                    if _ex_mode == "日数指定":
+                        _ex_days = st.number_input("今日から何日間", min_value=1, max_value=3650, value=30, step=1, key="ex_days_input")
+                    elif _ex_mode == "日付指定":
+                        _ex_default = None
                         try:
-                            _ex_val = str(_ex_date) if _ex_date else ""
-                            users_col().document(_ex_uid).set(
-                                {"expires_at": _ex_val, "updated_at": firestore.SERVER_TIMESTAMP},
-                                merge=True
-                            )
-                            st.success(f"✅ {_ex_uid} の期限を {_ex_val or '（解除）'} に設定しました。")
+                            if _ex_current:
+                                _ex_default = _dt_ex.date.fromisoformat(str(_ex_current)[:10])
+                        except Exception:
+                            _ex_default = None
+                        _ex_date = st.date_input("有効期限（日付）", value=_ex_default, key="ex_date_input")
+                    if st.button("📅 期限を設定", use_container_width=True, key="ex_set_btn"):
+                        try:
+                            if _ex_mode == "無期限":
+                                users_col().document(_ex_uid).set(
+                                    {"is_unlimited": True, "expires_at": "", "updated_at": firestore.SERVER_TIMESTAMP},
+                                    merge=True
+                                )
+                                st.success(f"✅ {_ex_uid} を無期限に設定しました。")
+                            elif _ex_mode == "日数指定":
+                                _ex_val = str((_dt_ex.date.today() + _dt_ex.timedelta(days=int(_ex_days))))
+                                users_col().document(_ex_uid).set(
+                                    {"expires_at": _ex_val, "is_unlimited": False, "updated_at": firestore.SERVER_TIMESTAMP},
+                                    merge=True
+                                )
+                                st.success(f"✅ {_ex_uid} の期限を {_ex_val}（{_ex_days}日後）に設定しました。")
+                            elif _ex_mode == "日付指定":
+                                _ex_val = str(_ex_date) if _ex_date else ""
+                                users_col().document(_ex_uid).set(
+                                    {"expires_at": _ex_val, "is_unlimited": False, "updated_at": firestore.SERVER_TIMESTAMP},
+                                    merge=True
+                                )
+                                st.success(f"✅ {_ex_uid} の期限を {_ex_val} に設定しました。")
+                            elif _ex_mode == "解除":
+                                users_col().document(_ex_uid).set(
+                                    {"expires_at": "", "is_unlimited": False, "updated_at": firestore.SERVER_TIMESTAMP},
+                                    merge=True
+                                )
+                                st.success(f"✅ {_ex_uid} の期限を解除しました。")
                             st.rerun()
                         except Exception as _exe:
                             st.error(f"期限設定失敗: {_exe}")
