@@ -1886,6 +1886,17 @@ def set_user_tenant(uid: str, tenant_id: str):
     fs_guard()
     users_col().document(uid).set({"tenant_id": tenant_id or DEFAULT_TENANT, "updated_at": firestore.SERVER_TIMESTAMP}, merge=True)
 
+def set_user_plan(uid: str, plan: str):
+    fs_guard()
+    valid_plans = ["starter", "standard", "pro", "apex"]
+    if plan not in valid_plans:
+        plan = "starter"
+    users_col().document(uid).set(
+        {"plan": plan, "updated_at": firestore.SERVER_TIMESTAMP},
+        merge=True,
+    )
+    st.session_state.pop(f"_feat_overrides_{uid}", None)
+
 def delete_user(uid: str):
     fs_guard()
     users_col().document(uid).delete()
@@ -1923,14 +1934,44 @@ def load_user_feature_overrides(uid: str) -> dict:
 def get_effective_feature_flags(uid: str, tenant_id: str = None) -> dict:
     """
     全 feature_id について有効/無効を解決して返す dict。
-    優先順位: user override → registry default。
-    将来 tenant default を挟む拡張点として tenant_id を引数に保持。
+    優先順位: user個別override → plan baseline → registry default。
     """
+    _PLAN_FEATURE_MAP = {
+        "starter":  {fid: False for fid in FEATURE_REGISTRY},
+        "standard": {
+            "image_generation": True, "personal_consulting": False,
+            "current_issue_diagnosis": True, "decision_metrics": True,
+            "fixed_concept_report": False, "ascend_ultra": False, "ascend_apex": False,
+            "image_gallery": False, "diag_structure": True, "diag_issue": True,
+            "diag_comparison": True, "diag_contradiction": True, "diag_execution": True,
+            "diag_investment": False, "diag_graph": False, "diag_file": False,
+        },
+        "pro": {
+            "image_generation": True, "personal_consulting": True,
+            "current_issue_diagnosis": True, "decision_metrics": True,
+            "fixed_concept_report": True, "ascend_ultra": True, "ascend_apex": False,
+            "image_gallery": True, "diag_structure": True, "diag_issue": True,
+            "diag_comparison": True, "diag_contradiction": True, "diag_execution": True,
+            "diag_investment": False, "diag_graph": True, "diag_file": True,
+        },
+        "apex": {fid: True for fid in FEATURE_REGISTRY},
+    }
+    try:
+        snap = users_col().document(uid).get()
+        d = (snap.to_dict() or {}) if snap.exists else {}
+        plan = d.get("plan") or "starter"
+        if plan not in _PLAN_FEATURE_MAP:
+            plan = "starter"
+    except Exception:
+        plan = "starter"
+    plan_flags = _PLAN_FEATURE_MAP.get(plan, {})
     overrides = load_user_feature_overrides(uid)
     result = {}
     for fid, reg in FEATURE_REGISTRY.items():
         if fid in overrides:
             result[fid] = bool(overrides[fid])
+        elif fid in plan_flags:
+            result[fid] = bool(plan_flags[fid])
         else:
             result[fid] = bool(reg.get("default_enabled", True))
     return result
@@ -15376,6 +15417,7 @@ ASCEND は、利用ログや評価情報をもとに**内部モデルを継続�
                     "📉 投資シグナル",
                     "🎨 テーマ設定",
                     "📩 お問い合わせ",
+                    "📄 利用契約書",
                 ],
                 horizontal=False,
                 key="admin_main_menu"
@@ -15848,6 +15890,28 @@ ASCEND は、利用ログや評価情報をもとに**内部モデルを継続�
                 else:
                     _sb_exp_label = "未設定"
                     _sb_color = "#6b7280"
+                # プラン表示
+                _sb_plan = _sb_data.get("plan") or ""
+                _sb_plan_labels = {
+                    "starter":  "STARTER（無料）",
+                    "standard": "STANDARD ¥9,800/月",
+                    "pro":      "PRO ¥39,800/月",
+                    "apex":     "APEX ¥89,800/月",
+                }
+                if _sb_plan in _sb_plan_labels:
+                    _sb_plan_colors = {
+                        "starter":  "#6b7280",
+                        "standard": "#3b82f6",
+                        "pro":      "#8b5cf6",
+                        "apex":     "#f59e0b",
+                    }
+                    st.markdown(
+                        f'<div style="font-size:0.72rem;color:{_sb_plan_colors.get(_sb_plan,"#6b7280")};'
+                        f'background:rgba(0,0,0,0.03);border-radius:6px;padding:6px 10px;margin-bottom:4px;'
+                        f'font-weight:700;">'
+                        f'📦 プラン: {_sb_plan_labels[_sb_plan]}</div>',
+                        unsafe_allow_html=True,
+                    )
                 st.markdown(
                     f'<div style="font-size:0.72rem;color:{_sb_color};background:rgba(0,0,0,0.03);'
                     f'border-radius:6px;padding:6px 10px;margin-bottom:6px;">'
@@ -15946,9 +16010,23 @@ try:
         # ★ feature guard: personal_consulting（実行直前）
         if st.session_state.get("_ci_user_page_open"):
             if not is_feature_enabled(uid, tenant_id, "personal_consulting"):
-                st.warning("この機能はご利用いただけません。")
-                st.session_state.pop("_ci_user_page_open", None)
-                st.stop()
+                # 管理発信スレッドが存在する場合はフラグOFFでも許可
+                try:
+                    _ci_flag_check = list(
+                        db.collection("consulting_inquiries")
+                        .where("user_id", "==", uid)
+                        .limit(10).stream()
+                    )
+                    _has_admin_thread = any(
+                        (d.to_dict() or {}).get("initiated_by") == "admin"
+                        for d in _ci_flag_check
+                    )
+                except Exception:
+                    _has_admin_thread = False
+                if not _has_admin_thread:
+                    st.warning("この機能はご利用いただけません。")
+                    st.session_state.pop("_ci_user_page_open", None)
+                    st.stop()
             try:
                 from ascend_consulting_inquiry import render_user_consulting_inquiry_page
                 if st.button("← チャットに戻る", key="ci_back_to_chat_top"):
@@ -18428,6 +18506,34 @@ try:
                         f"tenant_id: **{_feat_data.get('tenant_id', DEFAULT_TENANT)}**　｜　"
                         f"is_active: **{_feat_data.get('is_active', True)}**"
                     )
+
+                    # ── プラン選択 ───────────────────────────────
+                    _PLAN_LABELS = {
+                        "starter":  "STARTER（無料）",
+                        "standard": "STANDARD（¥9,800/月）",
+                        "pro":      "PRO（¥39,800/月）",
+                        "apex":     "APEX（¥89,800/月）",
+                    }
+                    _current_plan = _feat_data.get("plan") or "starter"
+                    if _current_plan not in _PLAN_LABELS:
+                        _current_plan = "starter"
+                    _plan_opts = list(_PLAN_LABELS.keys())
+                    _plan_sel = st.selectbox(
+                        "📦 サブスクプラン",
+                        _plan_opts,
+                        index=_plan_opts.index(_current_plan),
+                        format_func=lambda x: _PLAN_LABELS[x],
+                        key=f"plan_sel_{_feat_target_uid}",
+                    )
+                    if st.button(
+                        f"💳 プランを {_PLAN_LABELS[_plan_sel]} に変更",
+                        key=f"plan_apply_{_feat_target_uid}",
+                        use_container_width=True,
+                    ):
+                        set_user_plan(_feat_target_uid, _plan_sel)
+                        st.success(f"✅ {_feat_target_uid} のプランを {_PLAN_LABELS[_plan_sel]} に変更しました。")
+                        st.rerun()
+                    st.divider()
 
                     # ── プリセット ───────────────────────────────
                     _fp_c1, _fp_c2, _fp_c3 = st.columns(3)
@@ -23957,6 +24063,252 @@ try:
                     st.rerun()
                 except Exception as _e:
                     st.error(f"保存エラー: {_e}")
+        elif admin_menu == "📄 利用契約書":
+            st.subheader("📄 ASCEND サービス利用契約書")
+            st.caption("印刷はブラウザのCtrl+P（Cmd+P）をご使用ください。")
+            _contract_html = """<!DOCTYPE html>
+<html lang='ja'><head><meta charset='UTF-8'>
+<title>ASCEND サービス利用契約書</title>
+<style>
+body{font-family:'Hiragino Kaku Gothic Pro','Meiryo',sans-serif;font-size:12pt;line-height:1.8;margin:40px;color:#111;}
+h1{font-size:16pt;text-align:center;margin-bottom:8px;}
+h2{font-size:13pt;margin-top:24px;border-bottom:1px solid #999;padding-bottom:4px;}
+table{border-collapse:collapse;width:100%;margin:12px 0;font-size:10pt;}
+th,td{border:1px solid #999;padding:6px 10px;text-align:center;}
+th{background:#eee;}
+.sign{margin-top:40px;} .sign p{margin:4px 0;}
+</style></head><body>
+
+<h1>ASCEND サービス利用契約書</h1>
+<p style='text-align:center;font-size:10pt;color:#666;'>（サブスクリプション型コンサルティングAIサービス）</p>
+<p>Ys Consulting Office（以下「甲」という）と、本契約に同意したサービス利用者（以下「乙」という）は、甲が提供するAIコンサルティングプラットフォーム「ASCEND」（以下「本サービス」という）の利用に関し、以下のとおり契約を締結する。</p>
+<h2>第1条（定義）</h2>
+<p>1. 「本サービス」とは、甲が運営するAIコンサルティングプラットフォーム「ASCEND」をいう。<br>
+2. 「利用プラン」とは、STARTER・STANDARD・PRO・APEXの4段階のサブスクリプションプランをいう。<br>
+3. 「AIエンジン」とは、Core（Flash）・Ultra（2.5-Pro）・Apex（3.0）の各AI処理基盤をいう。<br>
+4. 「テナント」とは、乙が本サービス上で利用する独立したデータ領域をいう。</p>
+<h2>第2条（サービス内容）</h2>
+<table><tr><th>機能</th><th>STARTER</th><th>STANDARD</th><th>PRO</th><th>APEX</th></tr>
+<tr><td>月額料金</td><td>¥0</td><td>¥9,800</td><td>¥39,800</td><td>¥89,800</td></tr>
+<tr><td>AIエンジン</td><td>Core</td><td>Core</td><td>Ultra</td><td>Apex</td></tr>
+<tr><td>チャットモード数</td><td>1</td><td>7</td><td>19(全)</td><td>19(全)</td></tr>
+<tr><td>RAG検索</td><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+<tr><td>画像生成</td><td>×</td><td>○</td><td>○</td><td>○</td></tr>
+<tr><td>現状課題診断</td><td>×</td><td>○</td><td>○</td><td>○</td></tr>
+<tr><td>ファイル診断</td><td>×</td><td>×</td><td>○</td><td>○</td></tr>
+<tr><td>固定概念レポート</td><td>×</td><td>×</td><td>○</td><td>○</td></tr>
+<tr><td>個人相談</td><td>×</td><td>×</td><td>○</td><td>○</td></tr>
+<tr><td>投資シグナル</td><td>×</td><td>×</td><td>×</td><td>○</td></tr></table>
+<h2>第3条（契約の成立）</h2>
+<p>1. 本契約は、乙が本サービスのアカウント登録を完了し、利用プランを選択した時点で成立する。<br>2. 乙は、登録情報が正確かつ最新であることを保証する。</p>
+<h2>第4条（利用料金および支払）</h2>
+<p>1. 各プランの月額利用料金は以下のとおりとする。<br>
+　(1) STARTER：無料（¥0/月）<br>　(2) STANDARD：月額¥9,800（税込）<br>　(3) PRO：月額¥39,800（税込）<br>　(4) APEX：月額¥89,800（税込）<br>
+2. 利用料金は、毎月1日を起算日とし、甲が指定する決済方法により当月分を前払いするものとする。<br>
+3. 月途中のプラン変更については、変更月は日割り計算を適用する。<br>
+4. 既に支払われた利用料金は、甲の責に帰すべき事由がある場合を除き、返金しないものとする。</p>
+<h2>第5条（契約期間および更新）</h2>
+<p>1. 本契約の最低利用期間は1ヶ月とする。<br>2. 契約期間満了日の前日までに解約の申し出がない場合、本契約は同条件で1ヶ月間自動更新される。<br>3. STARTERプランは期間の定めなく利用できるものとし、有料プランへの変更時に本条が適用される。</p>
+<h2>第6条（プラン変更）</h2>
+<p>1. 乙は、甲所定の手続きにより、いつでも利用プランの変更を申請できる。<br>2. アップグレードは申請日の翌日から適用され、差額は日割りで請求する。<br>3. ダウングレードは、当月の契約期間満了日の翌日から適用される。</p>
+<h2>第7条（アカウント管理）</h2>
+<p>1. 乙は、自己のアカウント情報を適切に管理し、第三者に使用させてはならない。<br>2. アカウントの不正使用により生じた損害について、甲は一切の責任を負わない。</p>
+<h2>第8条（データの取扱い）</h2>
+<p>1. 乙が本サービスに入力したデータの所有権は乙に帰属する。<br>2. 甲は、利用者データを本サービスの提供およびサービス改善の目的にのみ使用する。<br>3. 甲は適切な安全管理措置を講じるものとする。<br>4. 契約終了後、甲は乙の利用者データを30日以内に削除する。</p>
+<h2>第9条（知的財産権）</h2>
+<p>1. 本サービスに関する知的財産権は、甲に帰属する。<br>2. AIが生成した出力物に関する権利は、適用法令の範囲内で乙に帰属する。</p>
+<h2>第10条（禁止事項）</h2>
+<p>乙は以下の行為を行ってはならない。<br>1. 本サービスの逆アセンブル・リバースエンジニアリング<br>2. 違法行為または公序良俗に反する行為<br>3. 知的財産権・プライバシー権を侵害する行為<br>4. サーバーへの過度な負荷<br>5. 第三者への再販売・再配布<br>6. セキュリティ機能の回避・無効化</p>
+<h2>第11条（サービスの中断・停止）</h2>
+<p>甲は、システム保守・天災その他やむを得ない場合に本サービスを一時中断できる。</p>
+<h2>第12条（免責事項）</h2>
+<p>1. 甲は、AIによる出力内容の正確性・完全性・有用性について保証しない。<br>2. 本サービス利用に基づく一切の意思決定は、乙の自己責任において行うものとする。<br>3. 甲の損害賠償責任は、乙が過去12ヶ月間に支払った利用料金の総額を上限とする。</p>
+<h2>第13条（解約）</h2>
+<p>1. 乙は、甲所定の手続きにより、いつでも本契約を解約できる。<br>2. 解約の効力は、当月の契約期間満了日に生じる。<br>3. 甲は、乙が本契約に違反した場合等、催告なく直ちに本契約を解除できる。</p>
+<h2>第14条（反社会的勢力の排除）</h2>
+<p>甲および乙は、自らが反社会的勢力に該当しないことを表明・保証する。</p>
+<h2>第15条（秘密保持）</h2>
+<p>甲および乙は、本契約に関連して知り得た相手方の秘密情報を、事前承諾なく第三者に開示・漏洩してはならない。</p>
+<h2>第16条（契約内容の変更）</h2>
+<p>1. 甲は変更内容を30日前までに通知するものとする。<br>2. 乙が変更の効力発生日までに解約の申し出をしない場合、変更内容に同意したものとみなす。</p>
+<h2>第17条（準拠法および管轄）</h2>
+<p>1. 本契約は、日本法に準拠する。<br>2. 本契約に関する紛争は、東京地方裁判所を第一審の専属的合意管轄裁判所とする。</p>
+<h2>第18条（協議事項）</h2>
+<p>本契約に定めのない事項は、甲乙誠意をもって協議し、円満に解決するものとする。</p>
+<div class='sign'>
+<p>契約締結日：　　　　年　　月　　日</p><br>
+<p><strong>【甲】</strong></p>
+<p>事業者名：Ys Consulting Office</p>
+<p>所在地：〒120-0045 東京都足立区千住桜木2-17-2-508</p>
+<p>電話番号：080-8030-1207</p><br>
+<p><strong>【乙】</strong></p>
+<p>氏名（法人名）：___________________________</p>
+<p>所在地：___________________________</p>
+<p>電話番号：___________________________</p>
+<p>代表者（担当者）：___________________________ （署名）</p>
+</div>
+</body></html>"""
+            st.download_button(
+                label="📥 契約書HTMLをダウンロード（開いて印刷）",
+                data=_contract_html.encode("utf-8"),
+                file_name="ASCEND_利用契約書.html",
+                mime="text/html",
+                use_container_width=True,
+                type="primary",
+            )
+            st.caption("ダウンロードしたHTMLファイルをブラウザで開き、Ctrl+P（Cmd+P）で印刷してください。")
+            CONTRACT_TEXT = """
+# ASCEND サービス利用契約書
+**（サブスクリプション型コンサルティングAIサービス）**
+
+Ys Consulting Office（以下「甲」という）と、本契約に同意したサービス利用者（以下「乙」という）は、甲が提供するAIコンサルティングプラットフォーム「ASCEND」（以下「本サービス」という）の利用に関し、以下のとおり契約を締結する。
+
+---
+
+## 第1条（定義）
+1. 「本サービス」とは、甲が運営するAIコンサルティングプラットフォーム「ASCEND」をいう。
+2. 「利用プラン」とは、STARTER・STANDARD・PRO・APEXの4段階のサブスクリプションプランをいう。
+3. 「AIエンジン」とは、Core（Flash）・Ultra（2.5-Pro）・Apex（3.0）の各AI処理基盤をいう。
+4. 「テナント」とは、乙が本サービス上で利用する独立したデータ領域をいう。
+
+## 第2条（サービス内容）
+| 機能 | STARTER | STANDARD | PRO | APEX |
+|------|:-------:|:--------:|:---:|:----:|
+| 月額料金 | ¥0 | ¥9,800 | ¥39,800 | ¥89,800 |
+| AIエンジン | Core | Core | Ultra | Apex |
+| チャットモード数 | 1(autoのみ) | 7 | 19(全) | 19(全) |
+| RAG検索 | ✓ | ✓ | ✓ | ✓ |
+| レベルスコア | ✓ | ✓ | ✓ | ✓ |
+| 構造化出力カード | — | ✓ | ✓ | ✓ |
+| 画像生成 | — | ✓ | ✓ | ✓ |
+| 画像ギャラリー | — | — | ✓ | ✓ |
+| 画像解析（添付） | — | ✓ | ✓ | ✓ |
+| ファイル解析（チャット） | — | ✓ | ✓ | ✓ |
+| 現状課題診断 | — | ✓ | ✓ | ✓ |
+| Decision Metrics | — | ✓ | ✓ | ✓ |
+| 診断タブ（基本6） | — | ✓ | ✓ | ✓ |
+| ファイル診断（Ultra使用） | — | — | ✓ | ✓ |
+| 固定概念レポート | — | — | ✓ | ✓ |
+| 会話の可視化（思考マップ） | — | — | ✓ | ✓ |
+| Ys個人相談 | — | — | ✓ | ✓ |
+| 投資シグナル | — | — | — | ✓ |
+
+## 第3条（契約の成立）
+1. 本契約は、乙が本サービスのアカウント登録を完了し、利用プランを選択した時点で成立する。
+2. 乙は、登録情報が正確かつ最新であることを保証する。
+
+## 第4条（利用料金および支払）
+1. 各プランの月額利用料金は以下のとおりとする。
+   - STARTER：無料（¥0/月）
+   - STANDARD：月額¥9,800（税込）
+   - PRO：月額¥39,800（税込）
+   - APEX：月額¥89,800（税込）
+2. 利用料金は、毎月1日を起算日とし、甲が指定する決済方法により当月分を前払いするものとする。
+3. 月途中のプラン変更については、変更月は日割り計算を適用する。
+4. 既に支払われた利用料金は、甲の責に帰すべき事由がある場合を除き、返金しないものとする。
+
+## 第5条（契約期間および更新）
+1. 本契約の最低利用期間は1ヶ月とする。
+2. 契約期間満了日の前日までに、いずれの当事者からも解約の申し出がない場合、本契約は同条件で1ヶ月間自動更新されるものとする。
+3. STARTERプランは期間の定めなく利用できるものとし、有料プランへの変更時に本条が適用される。
+
+## 第6条（プラン変更）
+1. 乙は、甲所定の手続きにより、いつでも利用プランの変更を申請できる。
+2. アップグレードは申請日の翌日から適用され、差額は日割りで請求する。
+3. ダウングレードは、当月の契約期間満了日の翌日から適用される。
+
+## 第7条（アカウント管理）
+1. 乙は、自己のアカウント情報を適切に管理し、第三者に使用させてはならない。
+2. アカウントの不正使用により生じた損害について、甲は一切の責任を負わないものとする。
+
+## 第8条（データの取扱い）
+1. 乙が本サービスに入力したデータの所有権は乙に帰属する。
+2. 甲は、利用者データを本サービスの提供およびサービス改善の目的にのみ使用する。
+3. 甲は、利用者データについて適切な安全管理措置を講じるものとする。
+4. 契約終了後、甲は乙の利用者データを30日以内に削除する。
+
+## 第9条（知的財産権）
+1. 本サービスに関する知的財産権は、甲に帰属する。
+2. 本サービスのAIが生成した出力物に関する権利は、適用法令の範囲内で乙に帰属するものとする。
+
+## 第10条（禁止事項）
+乙は、以下の行為を行ってはならない。
+1. 本サービスの逆アセンブル、リバースエンジニアリングまたは解析行為
+2. 本サービスを利用した違法行為または公序良俗に反する行為
+3. 甲または第三者の知的財産権・プライバシー権その他の権利を侵害する行為
+4. 本サービスのサーバーまたはネットワークに過度な負荷をかける行為
+5. 本サービスを第三者に再販売・サブライセンスまたは再配布する行為
+6. 本サービスのセキュリティ機能を回避または無効化する行為
+
+## 第11条（サービスの中断・停止）
+1. 甲は、システム保守・天災その他やむを得ない場合に本サービスを一時中断できる。
+2. 甲は、中断の際は事前に通知するよう努めるものとする。
+
+## 第12条（免責事項）
+1. 甲は、本サービスのAIによる出力内容の正確性・完全性・有用性について保証しない。
+2. 本サービスの利用に基づく一切の意思決定は、乙の自己責任において行うものとする。
+3. 甲の損害賠償責任は、乙が過去12ヶ月間に支払った利用料金の総額を上限とする。
+
+## 第13条（解約）
+1. 乙は、甲所定の手続きにより、いつでも本契約を解約できる。
+2. 解約の効力は、当月の契約期間満了日に生じる。
+3. 甲は、乙が本契約に違反した場合等、催告なく直ちに本契約を解除できる。
+
+## 第14条（反社会的勢力の排除）
+甲および乙は、自らが反社会的勢力に該当しないことを表明・保証する。
+
+## 第15条（秘密保持）
+甲および乙は、本契約に関連して知り得た相手方の秘密情報を、事前承諾なく第三者に開示・漏洩してはならない。
+
+## 第16条（契約内容の変更）
+1. 甲は、本契約の内容を変更する場合、変更内容を30日前までに通知するものとする。
+2. 乙が変更の効力発生日までに解約の申し出をしない場合、変更内容に同意したものとみなす。
+
+## 第17条（準拠法および管轄）
+1. 本契約は、日本法に準拠し、日本法に従って解釈されるものとする。
+2. 本契約に関する一切の紛争は、東京地方裁判所を第一審の専属的合意管轄裁判所とする。
+
+## 第18条（協議事項）
+本契約に定めのない事項または解釈に疑義が生じた場合は、甲乙誠意をもって協議し、円満に解決するものとする。
+
+---
+
+**【甲】**
+事業者名：Ys Consulting Office
+所在地：〒120-0045 東京都足立区千住桜木2-17-2-508
+電話番号：080-8030-1207
+
+---
+
+**契約締結日：　　　　年　　月　　日**
+
+**【乙】**
+氏名（法人名）：___________________________
+所在地：___________________________
+電話番号：___________________________
+代表者（担当者）：___________________________ （署名）
+"""
+            st.markdown(CONTRACT_TEXT)
+            st.divider()
+            col_dl1, col_dl2 = st.columns(2)
+            with col_dl1:
+                st.download_button(
+                    label="📥 契約書をテキストでダウンロード",
+                    data=CONTRACT_TEXT,
+                    file_name="ASCEND_利用契約書.md",
+                    mime="text/markdown",
+                    use_container_width=True,
+                )
+            with col_dl2:
+                _contract_plain = CONTRACT_TEXT.replace("#", "").replace("**", "").replace("---", "─"*30).replace("✓", "○").replace("—", "×")
+                st.download_button(
+                    label="📄 プレーンテキストでダウンロード",
+                    data=_contract_plain,
+                    file_name="ASCEND_利用契約書.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                )
+
         elif admin_menu == "📩 お問い合わせ":
             st.subheader("📩 お問い合わせ管理")
             try:
