@@ -1888,7 +1888,7 @@ def set_user_tenant(uid: str, tenant_id: str):
 
 def set_user_plan(uid: str, plan: str):
     fs_guard()
-    valid_plans = ["starter", "standard", "pro", "apex"]
+    valid_plans = ["starter", "standard", "pro", "apex", "ultra_member", "ultra_admin"]
     if plan not in valid_plans:
         plan = "starter"
     users_col().document(uid).set(
@@ -15418,6 +15418,9 @@ ASCEND は、利用ログや評価情報をもとに**内部モデルを継続�
                     "🎨 テーマ設定",
                     "📩 お問い合わせ",
                     "📄 利用契約書",
+                    "🏢 ULTRA企業契約管理",
+                    "📄 請求書発行",
+                    "📄 個人請求書発行",
                 ],
                 horizontal=False,
                 key="admin_main_menu"
@@ -18509,10 +18512,12 @@ try:
 
                     # ── プラン選択 ───────────────────────────────
                     _PLAN_LABELS = {
-                        "starter":  "STARTER（無料）",
-                        "standard": "STANDARD（¥9,800/月）",
-                        "pro":      "PRO（¥39,800/月）",
-                        "apex":     "APEX（¥89,800/月）",
+                        "starter":      "STARTER（無料）",
+                        "standard":     "STANDARD（¥9,800/月）",
+                        "pro":          "PRO（¥39,800/月）",
+                        "apex":         "APEX（¥89,800/月）",
+                        "ultra_member": "ULTRA（企業契約・メンバー）",
+                        "ultra_admin":  "ULTRA（企業契約・管理者）",
                     }
                     _current_plan = _feat_data.get("plan") or "starter"
                     if _current_plan not in _PLAN_LABELS:
@@ -24065,249 +24070,876 @@ try:
                     st.error(f"保存エラー: {_e}")
         elif admin_menu == "📄 利用契約書":
             st.subheader("📄 ASCEND サービス利用契約書")
-            st.caption("印刷はブラウザのCtrl+P（Cmd+P）をご使用ください。")
-            _contract_html = """<!DOCTYPE html>
-<html lang='ja'><head><meta charset='UTF-8'>
-<title>ASCEND サービス利用契約書</title>
+            import base64 as _b64_lic
+            _lic_html = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>ASCEND利用契約書</title>
 <style>
-body{font-family:'Hiragino Kaku Gothic Pro','Meiryo',sans-serif;font-size:12pt;line-height:1.8;margin:40px;color:#111;}
-h1{font-size:16pt;text-align:center;margin-bottom:8px;}
-h2{font-size:13pt;margin-top:24px;border-bottom:1px solid #999;padding-bottom:4px;}
-table{border-collapse:collapse;width:100%;margin:12px 0;font-size:10pt;}
-th,td{border:1px solid #999;padding:6px 10px;text-align:center;}
-th{background:#eee;}
-.sign{margin-top:40px;} .sign p{margin:4px 0;}
+body{font-family:'Hiragino Sans','Yu Gothic',sans-serif;max-width:860px;margin:40px auto;padding:40px;font-size:13px;color:#111;line-height:1.9;}
+h1{font-size:22px;text-align:center;margin-bottom:8px;letter-spacing:2px;}
+h2{font-size:14px;margin-top:28px;margin-bottom:6px;border-left:4px solid #333;padding-left:8px;}
+p{margin:6px 0;}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:12px;}
+th{background:#f0f0f0;border:1px solid #999;padding:7px;text-align:center;}
+td{border:1px solid #ccc;padding:7px;text-align:center;}
+td:first-child{text-align:left;}
+.subtitle{text-align:center;font-size:13px;color:#444;margin-bottom:4px;}
+.preamble{margin:20px 0 24px;padding:14px;border:1px solid #ccc;background:#fafafa;}
+.sign{display:flex;justify-content:space-between;margin-top:48px;gap:40px;}
+.sign-box{flex:1;border-top:1px solid #000;padding-top:10px;font-size:12px;line-height:2;}
+.divider{border:none;border-top:2px solid #000;margin:30px 0;}
+.issuer{margin-top:30px;font-size:12px;line-height:2;}
+@media print{button{display:none;} body{margin:20px;padding:20px;}}
 </style></head><body>
-
 <h1>ASCEND サービス利用契約書</h1>
-<p style='text-align:center;font-size:10pt;color:#666;'>（サブスクリプション型コンサルティングAIサービス）</p>
-<p>Ys Consulting Office（以下「甲」という）と、本契約に同意したサービス利用者（以下「乙」という）は、甲が提供するAIコンサルティングプラットフォーム「ASCEND」（以下「本サービス」という）の利用に関し、以下のとおり契約を締結する。</p>
+<p class="subtitle">（サブスクリプション型コンサルティングAIサービス）</p>
+<div class="preamble">
+Ys Consulting Office（以下「甲」という）と、本契約に同意したサービス利用者（以下「乙」という）は、甲が提供するAIコンサルティングプラットフォーム「ASCEND」（以下「本サービス」という）の利用に関し、以下のとおり契約を締結する。
+</div>
+
 <h2>第1条（定義）</h2>
-<p>1. 「本サービス」とは、甲が運営するAIコンサルティングプラットフォーム「ASCEND」をいう。<br>
-2. 「利用プラン」とは、STARTER・STANDARD・PRO・APEXの4段階のサブスクリプションプランをいう。<br>
-3. 「AIエンジン」とは、Core（Flash）・Ultra（2.5-Pro）・Apex（3.0）の各AI処理基盤をいう。<br>
-4. 「テナント」とは、乙が本サービス上で利用する独立したデータ領域をいう。</p>
+<p>1. 「本サービス」とは、甲が運営するAIコンサルティングプラットフォーム「ASCEND」をいう。</p>
+<p>2. 「利用プラン」とは、STARTER・STANDARD・PRO・APEX・ULTRAの5段階のサブスクリプションプランをいう。</p>
+<p>3. 「AIエンジン」とは、Core（Flash）・Ultra（2.5-Pro）・Apex（3.0）の各AI処理基盤をいう。</p>
+<p>4. 「テナント」とは、乙が本サービス上で利用する独立したデータ領域をいう。</p>
+
 <h2>第2条（サービス内容）</h2>
-<table><tr><th>機能</th><th>STARTER</th><th>STANDARD</th><th>PRO</th><th>APEX</th></tr>
-<tr><td>月額料金</td><td>¥0</td><td>¥9,800</td><td>¥39,800</td><td>¥89,800</td></tr>
-<tr><td>AIエンジン</td><td>Core</td><td>Core</td><td>Ultra</td><td>Apex</td></tr>
-<tr><td>チャットモード数</td><td>1</td><td>7</td><td>19(全)</td><td>19(全)</td></tr>
-<tr><td>RAG検索</td><td>○</td><td>○</td><td>○</td><td>○</td></tr>
-<tr><td>画像生成</td><td>×</td><td>○</td><td>○</td><td>○</td></tr>
-<tr><td>現状課題診断</td><td>×</td><td>○</td><td>○</td><td>○</td></tr>
-<tr><td>ファイル診断</td><td>×</td><td>×</td><td>○</td><td>○</td></tr>
-<tr><td>固定概念レポート</td><td>×</td><td>×</td><td>○</td><td>○</td></tr>
-<tr><td>個人相談</td><td>×</td><td>×</td><td>○</td><td>○</td></tr>
-<tr><td>投資シグナル</td><td>×</td><td>×</td><td>×</td><td>○</td></tr></table>
+<table>
+<tr><th>機能</th><th>STARTER</th><th>STANDARD</th><th>PRO</th><th>APEX</th><th>ULTRA</th></tr>
+<tr><td>月額料金</td><td>新規7日間 ¥0</td><td>¥9,800</td><td>¥39,800</td><td>¥89,800</td><td>¥300,000＋インセンティブ</td></tr>
+<tr><td>AIエンジン</td><td>Core</td><td>Core</td><td>Ultra</td><td>Apex</td><td>Apex</td></tr>
+<tr><td>チャットモード数</td><td>1(auto)</td><td>7</td><td>19(全)</td><td>19(全)</td><td>19(全)</td></tr>
+<tr><td>RAG検索・レベルスコア</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>画像生成・解析</td><td>—</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>現状課題診断・Decision Metrics</td><td>—</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>ファイル診断（Ultra使用）</td><td>—</td><td>—</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>固定概念レポート・個人相談</td><td>—</td><td>—</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>投資シグナル・Apexエンジン</td><td>—</td><td>—</td><td>—</td><td>✓</td><td>✓（管理者）</td></tr>
+<tr><td>企業アカウント（最大10名）</td><td>—</td><td>—</td><td>—</td><td>—</td><td>✓</td></tr>
+<tr><td>顧問契約・月次戦術レポート</td><td>—</td><td>—</td><td>—</td><td>—</td><td>✓</td></tr>
+</table>
+
 <h2>第3条（契約の成立）</h2>
-<p>1. 本契約は、乙が本サービスのアカウント登録を完了し、利用プランを選択した時点で成立する。<br>2. 乙は、登録情報が正確かつ最新であることを保証する。</p>
+<p>1. 本契約は、乙が本サービスのアカウント登録を完了し、利用プランを選択した時点で成立する。</p>
+<p>2. 乙は、登録情報が正確かつ最新であることを保証する。</p>
+
 <h2>第4条（利用料金および支払）</h2>
-<p>1. 各プランの月額利用料金は以下のとおりとする。<br>
-　(1) STARTER：無料（¥0/月）<br>　(2) STANDARD：月額¥9,800（税込）<br>　(3) PRO：月額¥39,800（税込）<br>　(4) APEX：月額¥89,800（税込）<br>
-2. 利用料金は、毎月1日を起算日とし、甲が指定する決済方法により当月分を前払いするものとする。<br>
-3. 月途中のプラン変更については、変更月は日割り計算を適用する。<br>
-4. 既に支払われた利用料金は、甲の責に帰すべき事由がある場合を除き、返金しないものとする。</p>
+<p>1. 各プランの月額利用料金は第2条のとおりとする。</p>
+<p>2. 利用料金は、毎月1日を起算日とし、甲が指定する決済方法により当月分を前払いするものとする。</p>
+<p>3. 月途中のプラン変更については、変更月は日割り計算を適用する。</p>
+<p>4. 既に支払われた利用料金は、甲の責に帰すべき事由がある場合を除き、返金しないものとする。</p>
+
 <h2>第5条（契約期間および更新）</h2>
-<p>1. 本契約の最低利用期間は1ヶ月とする。<br>2. 契約期間満了日の前日までに解約の申し出がない場合、本契約は同条件で1ヶ月間自動更新される。<br>3. STARTERプランは期間の定めなく利用できるものとし、有料プランへの変更時に本条が適用される。</p>
+<p>1. 本契約の最低利用期間は1ヶ月とする。</p>
+<p>2. 契約期間満了日の前日までに、いずれの当事者からも解約の申し出がない場合、本契約は同条件で1ヶ月間自動更新されるものとする。</p>
+<p>3. STARTERプランは期間の定めなく利用できるものとし、有料プランへの変更時に本条が適用される。</p>
+
 <h2>第6条（プラン変更）</h2>
-<p>1. 乙は、甲所定の手続きにより、いつでも利用プランの変更を申請できる。<br>2. アップグレードは申請日の翌日から適用され、差額は日割りで請求する。<br>3. ダウングレードは、当月の契約期間満了日の翌日から適用される。</p>
+<p>1. 乙は、甲所定の手続きにより、いつでも利用プランの変更を申請できる。</p>
+<p>2. アップグレードは申請日の翌日から適用され、差額は日割りで請求する。</p>
+<p>3. ダウングレードは、当月の契約期間満了日の翌日から適用される。</p>
+
 <h2>第7条（アカウント管理）</h2>
-<p>1. 乙は、自己のアカウント情報を適切に管理し、第三者に使用させてはならない。<br>2. アカウントの不正使用により生じた損害について、甲は一切の責任を負わない。</p>
+<p>1. 乙は、自己のアカウント情報を適切に管理し、第三者に使用させてはならない。</p>
+<p>2. アカウントの不正使用により生じた損害について、甲は一切の責任を負わないものとする。</p>
+
 <h2>第8条（データの取扱い）</h2>
-<p>1. 乙が本サービスに入力したデータの所有権は乙に帰属する。<br>2. 甲は、利用者データを本サービスの提供およびサービス改善の目的にのみ使用する。<br>3. 甲は適切な安全管理措置を講じるものとする。<br>4. 契約終了後、甲は乙の利用者データを30日以内に削除する。</p>
+<p>1. 乙が本サービスに入力したデータの所有権は乙に帰属する。</p>
+<p>2. 甲は、利用者データを本サービスの提供およびサービス改善の目的にのみ使用する。</p>
+<p>3. 甲は、利用者データについて適切な安全管理措置を講じるものとする。</p>
+<p>4. 契約終了後、甲は乙の利用者データを30日以内に削除する。</p>
+
 <h2>第9条（知的財産権）</h2>
-<p>1. 本サービスに関する知的財産権は、甲に帰属する。<br>2. AIが生成した出力物に関する権利は、適用法令の範囲内で乙に帰属する。</p>
+<p>1. 本サービスに関する知的財産権は、甲に帰属する。</p>
+<p>2. 本サービスのAIが生成した出力物に関する権利は、適用法令の範囲内で乙に帰属するものとする。</p>
+
 <h2>第10条（禁止事項）</h2>
-<p>乙は以下の行為を行ってはならない。<br>1. 本サービスの逆アセンブル・リバースエンジニアリング<br>2. 違法行為または公序良俗に反する行為<br>3. 知的財産権・プライバシー権を侵害する行為<br>4. サーバーへの過度な負荷<br>5. 第三者への再販売・再配布<br>6. セキュリティ機能の回避・無効化</p>
+<p>乙は、以下の行為を行ってはならない。</p>
+<p>1. 本サービスの逆アセンブル、リバースエンジニアリングまたは解析行為</p>
+<p>2. 本サービスを利用した違法行為または公序良俗に反する行為</p>
+<p>3. 甲または第三者の知的財産権・プライバシー権その他の権利を侵害する行為</p>
+<p>4. 本サービスのサーバーまたはネットワークに過度な負荷をかける行為</p>
+<p>5. 本サービスを第三者に再販売・サブライセンスまたは再配布する行為</p>
+<p>6. 本サービスのセキュリティ機能を回避または無効化する行為</p>
+
 <h2>第11条（サービスの中断・停止）</h2>
-<p>甲は、システム保守・天災その他やむを得ない場合に本サービスを一時中断できる。</p>
+<p>1. 甲は、システム保守・天災その他やむを得ない場合に本サービスを一時中断できる。</p>
+<p>2. 甲は、中断の際は事前に通知するよう努めるものとする。</p>
+
 <h2>第12条（免責事項）</h2>
-<p>1. 甲は、AIによる出力内容の正確性・完全性・有用性について保証しない。<br>2. 本サービス利用に基づく一切の意思決定は、乙の自己責任において行うものとする。<br>3. 甲の損害賠償責任は、乙が過去12ヶ月間に支払った利用料金の総額を上限とする。</p>
+<p>1. 甲は、本サービスのAIによる出力内容の正確性・完全性・有用性について保証しない。</p>
+<p>2. 本サービスの利用に基づく一切の意思決定は、乙の自己責任において行うものとする。</p>
+<p>3. 甲の損害賠償責任は、乙が過去12ヶ月間に支払った利用料金の総額を上限とする。</p>
+
 <h2>第13条（解約）</h2>
-<p>1. 乙は、甲所定の手続きにより、いつでも本契約を解約できる。<br>2. 解約の効力は、当月の契約期間満了日に生じる。<br>3. 甲は、乙が本契約に違反した場合等、催告なく直ちに本契約を解除できる。</p>
+<p>1. 乙は、甲所定の手続きにより、いつでも本契約を解約できる。</p>
+<p>2. 解約の効力は、当月の契約期間満了日に生じる。</p>
+<p>3. 甲は、乙が本契約に違反した場合等、催告なく直ちに本契約を解除できる。</p>
+
 <h2>第14条（反社会的勢力の排除）</h2>
 <p>甲および乙は、自らが反社会的勢力に該当しないことを表明・保証する。</p>
+
 <h2>第15条（秘密保持）</h2>
 <p>甲および乙は、本契約に関連して知り得た相手方の秘密情報を、事前承諾なく第三者に開示・漏洩してはならない。</p>
+
 <h2>第16条（契約内容の変更）</h2>
-<p>1. 甲は変更内容を30日前までに通知するものとする。<br>2. 乙が変更の効力発生日までに解約の申し出をしない場合、変更内容に同意したものとみなす。</p>
+<p>1. 甲は、本契約の内容を変更する場合、変更内容を30日前までに通知するものとする。</p>
+<p>2. 乙が変更の効力発生日までに解約の申し出をしない場合、変更内容に同意したものとみなす。</p>
+
 <h2>第17条（準拠法および管轄）</h2>
-<p>1. 本契約は、日本法に準拠する。<br>2. 本契約に関する紛争は、東京地方裁判所を第一審の専属的合意管轄裁判所とする。</p>
+<p>1. 本契約は、日本法に準拠し、日本法に従って解釈されるものとする。</p>
+<p>2. 本契約に関する一切の紛争は、東京地方裁判所を第一審の専属的合意管轄裁判所とする。</p>
+
 <h2>第18条（協議事項）</h2>
-<p>本契約に定めのない事項は、甲乙誠意をもって協議し、円満に解決するものとする。</p>
-<div class='sign'>
-<p>契約締結日：　　　　年　　月　　日</p><br>
-<p><strong>【甲】</strong></p>
-<p>事業者名：Ys Consulting Office</p>
-<p>所在地：〒120-0045 東京都足立区千住桜木2-17-2-508</p>
-<p>電話番号：080-8030-1207</p><br>
-<p><strong>【乙】</strong></p>
-<p>氏名（法人名）：___________________________</p>
-<p>所在地：___________________________</p>
-<p>電話番号：___________________________</p>
-<p>代表者（担当者）：___________________________ （署名）</p>
+<p>本契約に定めのない事項または解釈に疑義が生じた場合は、甲乙誠意をもって協議し、円満に解決するものとする。</p>
+
+<hr class="divider">
+<div class="issuer">
+<strong>【甲】</strong><br>
+事業者名：Ys Consulting Office<br>
+所在地：〒120-0045 東京都足立区千住桜木2-17-2-508<br>
+電話番号：080-8030-1207
+</div>
+<hr class="divider">
+<div class="sign">
+<div class="sign-box">
+契約締結日：　　　　年　　月　　日<br><br>
+<strong>【乙】</strong><br>
+氏名（法人名）：___________________________<br>
+所在地：___________________________<br>
+電話番号：___________________________<br>
+代表者（担当者）：___________________________ （署名）
+</div>
 </div>
 </body></html>"""
-            st.download_button(
-                label="📥 契約書HTMLをダウンロード（開いて印刷）",
-                data=_contract_html.encode("utf-8"),
-                file_name="ASCEND_利用契約書.html",
-                mime="text/html",
-                use_container_width=True,
-                type="primary",
+            _lic_b64 = _b64_lic.b64encode(_lic_html.encode("utf-8")).decode()
+            _lic_js = (
+                "(function(){{"
+                "var w=window.open('about:blank','_blank');"
+                "w.document.open();"
+                "w.document.write(decodeURIComponent(escape(atob('" + _lic_b64 + "'))));"
+                "w.document.close();"
+                "w.onload=function(){{w.focus();w.print();}};"
+                "}})();"
             )
-            st.caption("ダウンロードしたHTMLファイルをブラウザで開き、Ctrl+P（Cmd+P）で印刷してください。")
-            CONTRACT_TEXT = """
-# ASCEND サービス利用契約書
-**（サブスクリプション型コンサルティングAIサービス）**
+            st.components.v1.html(
+                '<button onclick="' + _lic_js + '" style="background:#3b82f6;color:#fff;border:none;border-radius:8px;padding:12px 32px;font-size:15px;font-weight:700;cursor:pointer;width:100%;">🖨️ 利用契約書を印刷・PDF出力</button>',
+                height=60
+            )
+            st.components.v1.html(_lic_html, height=900, scrolling=True)
 
-Ys Consulting Office（以下「甲」という）と、本契約に同意したサービス利用者（以下「乙」という）は、甲が提供するAIコンサルティングプラットフォーム「ASCEND」（以下「本サービス」という）の利用に関し、以下のとおり契約を締結する。
+        elif admin_menu == "📄 請求書発行":
+            st.subheader("📄 請求書発行")
+            import datetime as _dt_inv
 
----
+            # ── 発行者情報 ──────────────────────────────
+            with st.expander("⚙️ 発行者情報設定", expanded=False):
+                _inv_issuer_name    = st.text_input("発行者名", value=st.session_state.get("inv_issuer_name", "Ys Consulting Office"), key="inv_issuer_name")
+                _inv_issuer_zip     = st.text_input("郵便番号", value=st.session_state.get("inv_issuer_zip", ""), key="inv_issuer_zip")
+                _inv_issuer_addr    = st.text_input("住所", value=st.session_state.get("inv_issuer_addr", ""), key="inv_issuer_addr")
+                _inv_issuer_tel     = st.text_input("電話番号", value=st.session_state.get("inv_issuer_tel", ""), key="inv_issuer_tel")
+                _inv_invoice_no     = st.text_input("インボイス登録番号（T+13桁）", value=st.session_state.get("inv_invoice_no", ""), key="inv_invoice_no")
+                _inv_bank_name      = st.text_input("銀行名", value=st.session_state.get("inv_bank_name", ""), key="inv_bank_name")
+                _inv_bank_branch    = st.text_input("支店名", value=st.session_state.get("inv_bank_branch", ""), key="inv_bank_branch")
+                _inv_bank_type      = st.selectbox("口座種別", ["普通", "当座"], key="inv_bank_type")
+                _inv_bank_number    = st.text_input("口座番号", value=st.session_state.get("inv_bank_number", ""), key="inv_bank_number")
+                _inv_bank_holder    = st.text_input("口座名義", value=st.session_state.get("inv_bank_holder", ""), key="inv_bank_holder")
+            
+            # セッションから取得
+            _inv_issuer_name = st.session_state.get("inv_issuer_name", "Ys Consulting Office")
+            _inv_issuer_zip  = st.session_state.get("inv_issuer_zip", "")
+            _inv_issuer_addr = st.session_state.get("inv_issuer_addr", "")
+            _inv_issuer_tel  = st.session_state.get("inv_issuer_tel", "")
+            _inv_invoice_no  = st.session_state.get("inv_invoice_no", "")
+            _inv_bank_name   = st.session_state.get("inv_bank_name", "")
+            _inv_bank_branch = st.session_state.get("inv_bank_branch", "")
+            _inv_bank_type   = st.session_state.get("inv_bank_type", "普通")
+            _inv_bank_number = st.session_state.get("inv_bank_number", "")
+            _inv_bank_holder = st.session_state.get("inv_bank_holder", "")
 
-## 第1条（定義）
-1. 「本サービス」とは、甲が運営するAIコンサルティングプラットフォーム「ASCEND」をいう。
-2. 「利用プラン」とは、STARTER・STANDARD・PRO・APEXの4段階のサブスクリプションプランをいう。
-3. 「AIエンジン」とは、Core（Flash）・Ultra（2.5-Pro）・Apex（3.0）の各AI処理基盤をいう。
-4. 「テナント」とは、乙が本サービス上で利用する独立したデータ領域をいう。
-
-## 第2条（サービス内容）
-| 機能 | STARTER | STANDARD | PRO | APEX |
-|------|:-------:|:--------:|:---:|:----:|
-| 月額料金 | ¥0 | ¥9,800 | ¥39,800 | ¥89,800 |
-| AIエンジン | Core | Core | Ultra | Apex |
-| チャットモード数 | 1(autoのみ) | 7 | 19(全) | 19(全) |
-| RAG検索 | ✓ | ✓ | ✓ | ✓ |
-| レベルスコア | ✓ | ✓ | ✓ | ✓ |
-| 構造化出力カード | — | ✓ | ✓ | ✓ |
-| 画像生成 | — | ✓ | ✓ | ✓ |
-| 画像ギャラリー | — | — | ✓ | ✓ |
-| 画像解析（添付） | — | ✓ | ✓ | ✓ |
-| ファイル解析（チャット） | — | ✓ | ✓ | ✓ |
-| 現状課題診断 | — | ✓ | ✓ | ✓ |
-| Decision Metrics | — | ✓ | ✓ | ✓ |
-| 診断タブ（基本6） | — | ✓ | ✓ | ✓ |
-| ファイル診断（Ultra使用） | — | — | ✓ | ✓ |
-| 固定概念レポート | — | — | ✓ | ✓ |
-| 会話の可視化（思考マップ） | — | — | ✓ | ✓ |
-| Ys個人相談 | — | — | ✓ | ✓ |
-| 投資シグナル | — | — | — | ✓ |
-
-## 第3条（契約の成立）
-1. 本契約は、乙が本サービスのアカウント登録を完了し、利用プランを選択した時点で成立する。
-2. 乙は、登録情報が正確かつ最新であることを保証する。
-
-## 第4条（利用料金および支払）
-1. 各プランの月額利用料金は以下のとおりとする。
-   - STARTER：無料（¥0/月）
-   - STANDARD：月額¥9,800（税込）
-   - PRO：月額¥39,800（税込）
-   - APEX：月額¥89,800（税込）
-2. 利用料金は、毎月1日を起算日とし、甲が指定する決済方法により当月分を前払いするものとする。
-3. 月途中のプラン変更については、変更月は日割り計算を適用する。
-4. 既に支払われた利用料金は、甲の責に帰すべき事由がある場合を除き、返金しないものとする。
-
-## 第5条（契約期間および更新）
-1. 本契約の最低利用期間は1ヶ月とする。
-2. 契約期間満了日の前日までに、いずれの当事者からも解約の申し出がない場合、本契約は同条件で1ヶ月間自動更新されるものとする。
-3. STARTERプランは期間の定めなく利用できるものとし、有料プランへの変更時に本条が適用される。
-
-## 第6条（プラン変更）
-1. 乙は、甲所定の手続きにより、いつでも利用プランの変更を申請できる。
-2. アップグレードは申請日の翌日から適用され、差額は日割りで請求する。
-3. ダウングレードは、当月の契約期間満了日の翌日から適用される。
-
-## 第7条（アカウント管理）
-1. 乙は、自己のアカウント情報を適切に管理し、第三者に使用させてはならない。
-2. アカウントの不正使用により生じた損害について、甲は一切の責任を負わないものとする。
-
-## 第8条（データの取扱い）
-1. 乙が本サービスに入力したデータの所有権は乙に帰属する。
-2. 甲は、利用者データを本サービスの提供およびサービス改善の目的にのみ使用する。
-3. 甲は、利用者データについて適切な安全管理措置を講じるものとする。
-4. 契約終了後、甲は乙の利用者データを30日以内に削除する。
-
-## 第9条（知的財産権）
-1. 本サービスに関する知的財産権は、甲に帰属する。
-2. 本サービスのAIが生成した出力物に関する権利は、適用法令の範囲内で乙に帰属するものとする。
-
-## 第10条（禁止事項）
-乙は、以下の行為を行ってはならない。
-1. 本サービスの逆アセンブル、リバースエンジニアリングまたは解析行為
-2. 本サービスを利用した違法行為または公序良俗に反する行為
-3. 甲または第三者の知的財産権・プライバシー権その他の権利を侵害する行為
-4. 本サービスのサーバーまたはネットワークに過度な負荷をかける行為
-5. 本サービスを第三者に再販売・サブライセンスまたは再配布する行為
-6. 本サービスのセキュリティ機能を回避または無効化する行為
-
-## 第11条（サービスの中断・停止）
-1. 甲は、システム保守・天災その他やむを得ない場合に本サービスを一時中断できる。
-2. 甲は、中断の際は事前に通知するよう努めるものとする。
-
-## 第12条（免責事項）
-1. 甲は、本サービスのAIによる出力内容の正確性・完全性・有用性について保証しない。
-2. 本サービスの利用に基づく一切の意思決定は、乙の自己責任において行うものとする。
-3. 甲の損害賠償責任は、乙が過去12ヶ月間に支払った利用料金の総額を上限とする。
-
-## 第13条（解約）
-1. 乙は、甲所定の手続きにより、いつでも本契約を解約できる。
-2. 解約の効力は、当月の契約期間満了日に生じる。
-3. 甲は、乙が本契約に違反した場合等、催告なく直ちに本契約を解除できる。
-
-## 第14条（反社会的勢力の排除）
-甲および乙は、自らが反社会的勢力に該当しないことを表明・保証する。
-
-## 第15条（秘密保持）
-甲および乙は、本契約に関連して知り得た相手方の秘密情報を、事前承諾なく第三者に開示・漏洩してはならない。
-
-## 第16条（契約内容の変更）
-1. 甲は、本契約の内容を変更する場合、変更内容を30日前までに通知するものとする。
-2. 乙が変更の効力発生日までに解約の申し出をしない場合、変更内容に同意したものとみなす。
-
-## 第17条（準拠法および管轄）
-1. 本契約は、日本法に準拠し、日本法に従って解釈されるものとする。
-2. 本契約に関する一切の紛争は、東京地方裁判所を第一審の専属的合意管轄裁判所とする。
-
-## 第18条（協議事項）
-本契約に定めのない事項または解釈に疑義が生じた場合は、甲乙誠意をもって協議し、円満に解決するものとする。
-
----
-
-**【甲】**
-事業者名：Ys Consulting Office
-所在地：〒120-0045 東京都足立区千住桜木2-17-2-508
-電話番号：080-8030-1207
-
----
-
-**契約締結日：　　　　年　　月　　日**
-
-**【乙】**
-氏名（法人名）：___________________________
-所在地：___________________________
-電話番号：___________________________
-代表者（担当者）：___________________________ （署名）
-"""
-            st.markdown(CONTRACT_TEXT)
             st.divider()
-            col_dl1, col_dl2 = st.columns(2)
-            with col_dl1:
-                st.download_button(
-                    label="📥 契約書をテキストでダウンロード",
-                    data=CONTRACT_TEXT,
-                    file_name="ASCEND_利用契約書.md",
-                    mime="text/markdown",
-                    use_container_width=True,
+
+            # ── 請求先選択 ──────────────────────────────
+            _inv_corps = []
+            try:
+                for _cd in db.collection("ultra_corporates").stream():
+                    _inv_corps.append(_cd.to_dict() | {"doc_id": _cd.id})
+            except Exception:
+                pass
+
+            if not _inv_corps:
+                st.warning("ULTRA企業契約が登録されていません。")
+            else:
+                _inv_corp_opts = {c["company_name"]: c for c in _inv_corps}
+                _inv_corp_sel_name = st.selectbox("請求先企業", list(_inv_corp_opts.keys()), key="inv_corp_sel")
+                _inv_corp = _inv_corp_opts[_inv_corp_sel_name]
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    _inv_date = st.date_input("請求日", value=_dt_inv.date.today(), key="inv_date")
+                with col2:
+                    _inv_due  = st.date_input("支払期限", value=_dt_inv.date.today() + _dt_inv.timedelta(days=30), key="inv_due")
+
+                _inv_number = st.text_input("請求書番号", value=f"INV-{_dt_inv.date.today().strftime('%Y%m')}-001", key="inv_number")
+                _inv_tax_rate = st.number_input("消費税率（%）", min_value=0, max_value=100, value=10, step=1, key="inv_tax_rate")
+
+                st.divider()
+
+                # ── 明細 ──────────────────────────────
+                st.markdown("#### 明細")
+                # 固定：顧問契約料
+                _inv_base = st.number_input("顧問契約料（円）", value=300000, step=1000, key="inv_base")
+
+                # インセンティブ（複数行）
+                st.markdown("**インセンティブ明細**")
+                if "inv_incentives" not in st.session_state:
+                    st.session_state["inv_incentives"] = [{"name": "", "qty": 1, "price": 0}]
+
+                for _ii, _item in enumerate(st.session_state["inv_incentives"]):
+                    _ic1, _ic2, _ic3, _ic4 = st.columns([4, 1, 2, 1])
+                    with _ic1:
+                        _item["name"] = st.text_input("項目名", value=_item["name"], key=f"inv_inc_name_{_ii}")
+                    with _ic2:
+                        _item["qty"] = st.number_input("数量", value=_item["qty"], min_value=1, key=f"inv_inc_qty_{_ii}")
+                    with _ic3:
+                        _item["price"] = st.number_input("単価（円）", value=_item["price"], step=1000, key=f"inv_inc_price_{_ii}")
+                    with _ic4:
+                        if st.button("🗑️", key=f"inv_inc_del_{_ii}") and len(st.session_state["inv_incentives"]) > 1:
+                            st.session_state["inv_incentives"].pop(_ii)
+                            st.rerun()
+
+                if st.button("➕ インセンティブ行を追加", key="inv_inc_add"):
+                    st.session_state["inv_incentives"].append({"name": "", "qty": 1, "price": 0})
+                    st.rerun()
+
+                _inv_remarks = st.text_area("備考", key="inv_remarks", height=80)
+
+                # ── 金額計算 ──────────────────────────────
+                _inv_incentive_total = sum(i["qty"] * i["price"] for i in st.session_state["inv_incentives"])
+                _inv_subtotal = _inv_base + _inv_incentive_total
+                _inv_tax = int(_inv_subtotal * _inv_tax_rate / 100)
+                _inv_total = _inv_subtotal + _inv_tax
+
+                st.divider()
+                st.markdown(f"**小計：** ¥{_inv_subtotal:,}")
+                st.markdown(f"**消費税（{_inv_tax_rate}%）：** ¥{_inv_tax:,}")
+                st.markdown(f"**合計：** ¥{_inv_total:,}")
+
+                # ── 保存・印刷/PDF ──────────────────────────────
+                col_sv1, col_sv2 = st.columns(2)
+                with col_sv1:
+                    if st.button("💾 請求書を保存", use_container_width=True, key="inv_save"):
+                        import datetime as _dt_inv_save
+                        _inv_save_doc = {
+                            "invoice_number":  st.session_state.get("inv_number", ""),
+                            "invoice_date":    str(_inv_date),
+                            "due_date":        str(_inv_due),
+                            "corp_name":       _inv_corp_sel_name,
+                            "corp_id":         _inv_corp.get("doc_id", ""),
+                            "issuer_name":     _inv_issuer_name,
+                            "invoice_no":      _inv_invoice_no,
+                            "base_amount":     _inv_base,
+                            "incentives":      st.session_state["inv_incentives"],
+                            "subtotal":        _inv_subtotal,
+                            "tax_rate":        _inv_tax_rate,
+                            "tax_amount":      _inv_tax,
+                            "total":           _inv_total,
+                            "remarks":         _inv_remarks,
+                            "type":            "corporate",
+                            "created_at":      _dt_inv_save.datetime.utcnow().isoformat(),
+                        }
+                        _inv_doc_id = st.session_state.get("inv_number", "").replace("/", "-") or _dt_inv_save.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+                        db.collection("invoices").document(_inv_doc_id).set(_inv_save_doc)
+                        st.success(f"✅ 請求書を保存しました（{_inv_doc_id}）")
+
+                with col_sv2:
+                    if st.button("🖨️ 請求書を印刷・PDF出力", use_container_width=True, key="inv_print"):
+                        _inc_rows = "".join([
+                            f"<tr><td>{i['name']}</td><td style='text-align:right'>{i['qty']}</td><td style='text-align:right'>¥{i['price']:,}</td><td style='text-align:right'>¥{i['qty']*i['price']:,}</td></tr>"
+                            for i in st.session_state["inv_incentives"] if i["name"]
+                        ])
+                        _inv_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>請求書</title>
+<style>
+body{{font-family:'Hiragino Sans','Yu Gothic',sans-serif;max-width:800px;margin:40px auto;padding:40px;font-size:13px;color:#111;}}
+h1{{font-size:24px;text-align:center;margin-bottom:30px;border-bottom:2px solid #000;padding-bottom:10px;}}
+.header{{display:flex;justify-content:space-between;margin-bottom:30px;}}
+.to{{font-size:16px;font-weight:bold;border-bottom:1px solid #000;padding-bottom:4px;margin-bottom:16px;}}
+.info{{font-size:12px;color:#333;}}
+table{{width:100%;border-collapse:collapse;margin:20px 0;}}
+th{{background:#f0f0f0;border:1px solid #999;padding:8px;text-align:center;}}
+td{{border:1px solid #ccc;padding:8px;}}
+.total-table{{width:40%;margin-left:auto;margin-top:10px;}}
+.total-table td{{border:none;padding:4px 8px;}}
+.total-row{{font-weight:bold;font-size:15px;border-top:2px solid #000;}}
+.remarks{{margin-top:20px;border:1px solid #ccc;padding:10px;min-height:60px;}}
+.bank{{margin-top:20px;font-size:12px;}}
+@media print{{button{{display:none;}}}}
+</style></head><body>
+<h1>請 求 書</h1>
+<div class="header">
+<div>
+<div class="to">{_inv_corp_sel_name} 御中</div>
+<div class="info">請求書番号：{st.session_state.get('inv_number','')}</div>
+<div class="info">請求日：{str(_inv_date)}</div>
+<div class="info">支払期限：{str(_inv_due)}</div>
+</div>
+<div style="text-align:right">
+<div style="font-weight:bold;font-size:15px;">{_inv_issuer_name}</div>
+<div class="info">〒{_inv_issuer_zip}</div>
+<div class="info">{_inv_issuer_addr}</div>
+<div class="info">TEL: {_inv_issuer_tel}</div>
+<div class="info">登録番号: {_inv_invoice_no}</div>
+</div>
+</div>
+<div style="text-align:right;font-size:18px;font-weight:bold;margin-bottom:20px;">
+ご請求金額：¥{_inv_total:,}（税込）
+</div>
+<table>
+<tr><th>項目</th><th>数量</th><th>単価</th><th>金額</th></tr>
+<tr><td>顧問契約料（ASCENDサービス利用料）</td><td style="text-align:right">1</td><td style="text-align:right">¥{_inv_base:,}</td><td style="text-align:right">¥{_inv_base:,}</td></tr>
+{_inc_rows}
+</table>
+<table class="total-table">
+<tr><td>小計</td><td style="text-align:right">¥{_inv_subtotal:,}</td></tr>
+<tr><td>消費税（{_inv_tax_rate}%）</td><td style="text-align:right">¥{_inv_tax:,}</td></tr>
+<tr class="total-row"><td>合計</td><td style="text-align:right">¥{_inv_total:,}</td></tr>
+</table>
+<div class="bank">
+<strong>【振込先】</strong><br>
+{_inv_bank_name}　{_inv_bank_branch}　{_inv_bank_type}　{_inv_bank_number}　{_inv_bank_holder}
+</div>
+<div class="remarks"><strong>備考</strong><br>{_inv_remarks.replace(chr(10),'<br>')}</div>
+</body></html>"""
+                        import base64 as _b64_inv
+                        _html_b64_inv = _b64_inv.b64encode(_inv_html.encode("utf-8")).decode()
+                        _btn_js_inv = (
+                        "(function(){{"
+                        "var w=window.open('about:blank','_blank');"
+                        "w.document.open();"
+                        "w.document.write(decodeURIComponent(escape(atob('" + _html_b64_inv + "'))));"
+                        "w.document.close();"
+                        "w.onload=function(){{w.focus();w.print();}};"
+                        "}})();"
+                        )
+                        st.components.v1.html(
+                            '<button onclick="' + _btn_js_inv + '" style="background:#3b82f6;color:#fff;border:none;border-radius:8px;padding:14px 32px;font-size:15px;font-weight:700;cursor:pointer;width:100%;">🖨️ 請求書を新規タブで開いて印刷・PDF出力</button>',
+                            height=60
+                            )
+
+                # ── 企業契約書印刷 ──────────────────────────────
+                st.divider()
+                st.markdown("#### 📋 企業契約書印刷")
+                if st.button("🖨️ 企業契約書を印刷・PDF出力", use_container_width=True, key="inv_contract_print"):
+                    import datetime as _dt_contract
+                    import base64 as _b64_contract
+                    _contract_corp_name = _inv_corp_sel_name
+                    _contract_admin_uid = _inv_corp.get("admin_uid", "")
+                    _contract_industry  = _inv_corp.get("industry", "")
+                    _contract_date      = _dt_contract.date.today().strftime("%Y年%m月%d日")
+                    _contract_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>ASCEND企業利用契約書</title>
+<style>
+body{{font-family:'Hiragino Sans','Yu Gothic',sans-serif;max-width:800px;margin:40px auto;padding:40px;font-size:13px;color:#111;line-height:1.8;}}
+h1{{font-size:22px;text-align:center;margin-bottom:30px;border-bottom:2px solid #000;padding-bottom:10px;}}
+h2{{font-size:15px;margin-top:24px;}}
+table{{width:100%;border-collapse:collapse;margin:16px 0;}}
+th{{background:#f0f0f0;border:1px solid #999;padding:8px;text-align:center;}}
+td{{border:1px solid #ccc;padding:8px;}}
+.sign{{margin-top:40px;display:flex;justify-content:space-between;}}
+.sign-box{{width:45%;border-top:1px solid #000;padding-top:8px;font-size:12px;}}
+@media print{{button{{display:none;}}}}
+</style></head><body>
+<h1>ASCEND サービス企業利用契約書</h1>
+<p>Ys Consulting Office（以下「甲」）と下記企業（以下「乙」）は、ASCENDサービスの企業利用に関し、以下のとおり契約を締結する。</p>
+<h2>■ 契約企業情報</h2>
+<table>
+<tr><th>企業名</th><td>{_contract_corp_name}</td></tr>
+<tr><th>管理者UID</th><td>{_contract_admin_uid}</td></tr>
+<tr><th>業種</th><td>{_contract_industry}</td></tr>
+<tr><th>企業管理コード</th><td>{_inv_corp.get('corporate_tenant_id','')}</td></tr>
+</table>
+<h2>■ 契約プラン（ULTRA企業契約）</h2>
+<table>
+<tr><th>月額料金</th><td>¥300,000（税別）＋インセンティブ</td></tr>
+<tr><th>AIエンジン</th><td>Apex（最上位）</td></tr>
+<tr><th>アカウント数</th><td>最大10名（管理者1名＋メンバー9名）</td></tr>
+<tr><th>管理者権限</th><td>APEX相当（全機能解放）</td></tr>
+<tr><th>メンバー権限</th><td>PRO相当</td></tr>
+<tr><th>テナント共有</th><td>RAGナレッジ・診断履歴を社内共有</td></tr>
+<tr><th>月次戦術レポート</th><td>毎月1回提出</td></tr>
+<tr><th>顧問契約</th><td>Ys Consulting Office直接支援付き</td></tr>
+</table>
+<h2>■ 第1条（目的）</h2>
+<p>本契約は、甲が提供するAIコンサルティングプラットフォーム「ASCEND」を乙が企業として利用するにあたり、必要な事項を定めることを目的とする。</p>
+<h2>■ 第2条（利用条件）</h2>
+<p>乙は、本契約に基づき、最大10名の社員アカウントを発行し、ASCENDの全機能を業務目的に限り利用できる。第三者への再販・再配布は禁止する。</p>
+<h2>■ 第3条（料金・支払）</h2>
+<p>乙は毎月、甲が指定する方法により月額利用料を支払うものとする。インセンティブは別途協議の上決定する。</p>
+<h2>■ 第4条（秘密保持）</h2>
+<p>甲および乙は、本契約に関連して知り得た相手方の秘密情報を第三者に開示・漏洩してはならない。</p>
+<h2>■ 第5条（解約）</h2>
+<p>いずれの当事者も、30日前の書面による通知をもって本契約を解約できる。</p>
+<h2>■ 第6条（準拠法・管轄）</h2>
+<p>本契約は日本法に準拠し、東京地方裁判所を第一審の専属的合意管轄裁判所とする。</p>
+<p style="text-align:right;margin-top:20px;">契約締結日：{_contract_date}</p>
+<div class="sign">
+<div class="sign-box">
+<strong>【甲】</strong><br>
+Ys Consulting Office<br>
+〒{_inv_issuer_zip}<br>
+{_inv_issuer_addr}<br>
+TEL: {_inv_issuer_tel}<br>
+登録番号: {_inv_invoice_no}<br><br>
+署名：___________________________
+</div>
+<div class="sign-box">
+<strong>【乙】</strong><br>
+企業名：{_contract_corp_name}<br>
+管理者：{_contract_admin_uid}<br><br><br>
+署名：___________________________
+</div>
+</div>
+</body></html>"""
+                    _html_b64_contract = _b64_contract.b64encode(_contract_html.encode("utf-8")).decode()
+                    _btn_js_contract = (
+                        "(function(){{"
+                        "var w=window.open('about:blank','_blank');"
+                        "w.document.open();"
+                        "w.document.write(decodeURIComponent(escape(atob('" + _html_b64_contract + "'))));"
+                        "w.document.close();"
+                        "w.onload=function(){{w.focus();w.print();}};"
+                        "}})();"
+                    )
+                    st.components.v1.html(
+                        '<button onclick="' + _btn_js_contract + '" style="background:#3b82f6;color:#fff;border:none;border-radius:8px;padding:14px 32px;font-size:15px;font-weight:700;cursor:pointer;width:100%;">🖨️ 企業契約書を新規タブで開いて印刷・PDF出力</button>',
+                        height=60
+                    )
+
+                # ── 発行済み一覧 ──────────────────────────────
+                st.divider()
+                st.markdown("#### 📋 発行済み請求書一覧")
+                try:
+                    _inv_list = [d.to_dict() | {"doc_id": d.id} for d in db.collection("invoices").where("type", "==", "corporate").stream()]
+                    _inv_list.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+                    if not _inv_list:
+                        st.info("発行済み請求書はありません。")
+                    else:
+                        for _inv_item in _inv_list:
+                            with st.expander(f"📄 {_inv_item.get('invoice_number','')}｜{_inv_item.get('corp_name','')}｜¥{_inv_item.get('total',0):,}｜{_inv_item.get('invoice_date','')}"):
+                                st.write(f"**請求先:** {_inv_item.get('corp_name','')}")
+                                st.write(f"**請求日:** {_inv_item.get('invoice_date','')}　**支払期限:** {_inv_item.get('due_date','')}")
+                                st.write(f"**小計:** ¥{_inv_item.get('subtotal',0):,}　**税率:** {_inv_item.get('tax_rate',10)}%　**税額:** ¥{_inv_item.get('tax_amount',0):,}　**合計:** ¥{_inv_item.get('total',0):,}")
+                                if st.button("🗑️ 削除", key=f"inv_del_{_inv_item['doc_id']}"):
+                                    db.collection("invoices").document(_inv_item["doc_id"]).delete()
+                                    st.success("削除しました")
+                                    st.rerun()
+                except Exception as _inv_e:
+                    st.error(f"取得エラー: {_inv_e}")
+
+        elif admin_menu == "📄 個人請求書発行":
+            st.subheader("📄 個人請求書発行")
+            import datetime as _dt_pinv
+
+            # ── 発行者情報（ULTRA請求書と共有）──────────────────────────────
+            with st.expander("⚙️ 発行者情報設定", expanded=False):
+                _pinv_issuer_name = st.text_input("発行者名", value=st.session_state.get("inv_issuer_name", "Ys Consulting Office"), key="pinv_issuer_name")
+                _pinv_issuer_zip  = st.text_input("郵便番号", value=st.session_state.get("inv_issuer_zip", ""), key="pinv_issuer_zip")
+                _pinv_issuer_addr = st.text_input("住所", value=st.session_state.get("inv_issuer_addr", ""), key="pinv_issuer_addr")
+                _pinv_issuer_tel  = st.text_input("電話番号", value=st.session_state.get("inv_issuer_tel", ""), key="pinv_issuer_tel")
+                _pinv_invoice_no  = st.text_input("インボイス登録番号（T+13桁）", value=st.session_state.get("inv_invoice_no", ""), key="pinv_invoice_no")
+                _pinv_bank_name   = st.text_input("銀行名", value=st.session_state.get("inv_bank_name", ""), key="pinv_bank_name")
+                _pinv_bank_branch = st.text_input("支店名", value=st.session_state.get("inv_bank_branch", ""), key="pinv_bank_branch")
+                _pinv_bank_type   = st.selectbox("口座種別", ["普通", "当座"], key="pinv_bank_type")
+                _pinv_bank_number = st.text_input("口座番号", value=st.session_state.get("inv_bank_number", ""), key="pinv_bank_number")
+                _pinv_bank_holder = st.text_input("口座名義", value=st.session_state.get("inv_bank_holder", ""), key="pinv_bank_holder")
+
+            _pinv_issuer_name = st.session_state.get("pinv_issuer_name", st.session_state.get("inv_issuer_name", "Ys Consulting Office"))
+            _pinv_issuer_zip  = st.session_state.get("pinv_issuer_zip", st.session_state.get("inv_issuer_zip", ""))
+            _pinv_issuer_addr = st.session_state.get("pinv_issuer_addr", st.session_state.get("inv_issuer_addr", ""))
+            _pinv_issuer_tel  = st.session_state.get("pinv_issuer_tel", st.session_state.get("inv_issuer_tel", ""))
+            _pinv_invoice_no  = st.session_state.get("pinv_invoice_no", st.session_state.get("inv_invoice_no", ""))
+            _pinv_bank_name   = st.session_state.get("pinv_bank_name", st.session_state.get("inv_bank_name", ""))
+            _pinv_bank_branch = st.session_state.get("pinv_bank_branch", st.session_state.get("inv_bank_branch", ""))
+            _pinv_bank_type   = st.session_state.get("pinv_bank_type", "普通")
+            _pinv_bank_number = st.session_state.get("pinv_bank_number", st.session_state.get("inv_bank_number", ""))
+            _pinv_bank_holder = st.session_state.get("pinv_bank_holder", st.session_state.get("inv_bank_holder", ""))
+
+            st.divider()
+
+            # ── 請求先ユーザー選択 ──────────────────────────────
+            PLAN_PRICES_LABEL = {
+                "starter":      ("STARTER", 0),
+                "standard":     ("STANDARD", 9800),
+                "pro":          ("PRO", 39800),
+                "apex":         ("APEX", 89800),
+                "ultra_admin":  ("ULTRA管理者", 300000),
+                "ultra_member": ("ULTRAメンバー", 300000),
+            }
+            _pinv_users = []
+            try:
+                for _ud in db.collection("users").stream():
+                    _udata = _ud.to_dict() or {}
+                    if _ud.id != "admin":
+                        _plan = _udata.get("plan", "starter")
+                        _pinv_users.append({
+                            "uid": _ud.id,
+                            "plan": _plan,
+                            "label": f"{_ud.id}　({PLAN_PRICES_LABEL.get(_plan, ('不明',0))[0]})",
+                        })
+                _pinv_users.sort(key=lambda x: x["uid"])
+            except Exception:
+                pass
+
+            if not _pinv_users:
+                st.warning("ユーザーが存在しません。")
+            else:
+                _pinv_user_sel = st.selectbox(
+                    "請求先ユーザー",
+                    options=[u["uid"] for u in _pinv_users],
+                    format_func=lambda x: next((u["label"] for u in _pinv_users if u["uid"] == x), x),
+                    key="pinv_user_sel",
                 )
-            with col_dl2:
-                _contract_plain = CONTRACT_TEXT.replace("#", "").replace("**", "").replace("---", "─"*30).replace("✓", "○").replace("—", "×")
-                st.download_button(
-                    label="📄 プレーンテキストでダウンロード",
-                    data=_contract_plain,
-                    file_name="ASCEND_利用契約書.txt",
-                    mime="text/plain",
-                    use_container_width=True,
+                _pinv_sel_user = next((u for u in _pinv_users if u["uid"] == _pinv_user_sel), {})
+                _pinv_plan = _pinv_sel_user.get("plan", "starter")
+                _pinv_plan_label, _pinv_plan_price = PLAN_PRICES_LABEL.get(_pinv_plan, ("不明", 0))
+                st.info(f"プラン: {_pinv_plan_label}　基本料金: ¥{_pinv_plan_price:,}")
+
+                _pinv_name_free = st.text_input("請求先氏名・法人名", value=_pinv_user_sel, key="pinv_name_free")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    _pinv_date = st.date_input("請求日", value=_dt_pinv.date.today(), key="pinv_date")
+                with col2:
+                    _pinv_due  = st.date_input("支払期限", value=_dt_pinv.date.today() + _dt_pinv.timedelta(days=30), key="pinv_due")
+
+                _pinv_number   = st.text_input("請求書番号", value=f"INV-P-{_dt_pinv.date.today().strftime('%Y%m')}-001", key="pinv_number")
+                _pinv_tax_rate = st.number_input("消費税率（%）", min_value=0, max_value=100, value=10, step=1, key="pinv_tax_rate")
+                _pinv_base_key = f"pinv_base_{_pinv_user_sel}_{_pinv_plan}"
+                if _pinv_base_key not in st.session_state:
+                    st.session_state[_pinv_base_key] = _pinv_plan_price
+                _pinv_base = st.number_input("基本料金（円）", value=st.session_state[_pinv_base_key], step=100, key=_pinv_base_key)
+
+                st.divider()
+                st.markdown("**追加明細（オプション）**")
+                if "pinv_incentives" not in st.session_state:
+                    st.session_state["pinv_incentives"] = [{"name": "", "qty": 1, "price": 0}]
+
+                for _ii, _item in enumerate(st.session_state["pinv_incentives"]):
+                    _ic1, _ic2, _ic3, _ic4 = st.columns([4, 1, 2, 1])
+                    with _ic1:
+                        _item["name"] = st.text_input("項目名", value=_item["name"], key=f"pinv_inc_name_{_ii}")
+                    with _ic2:
+                        _item["qty"] = st.number_input("数量", value=_item["qty"], min_value=1, key=f"pinv_inc_qty_{_ii}")
+                    with _ic3:
+                        _item["price"] = st.number_input("単価（円）", value=_item["price"], step=100, key=f"pinv_inc_price_{_ii}")
+                    with _ic4:
+                        if st.button("🗑️", key=f"pinv_inc_del_{_ii}") and len(st.session_state["pinv_incentives"]) > 1:
+                            st.session_state["pinv_incentives"].pop(_ii)
+                            st.rerun()
+
+                if st.button("➕ 明細行を追加", key="pinv_inc_add"):
+                    st.session_state["pinv_incentives"].append({"name": "", "qty": 1, "price": 0})
+                    st.rerun()
+
+                _pinv_remarks = st.text_area("備考", key="pinv_remarks", height=80)
+
+                _pinv_extra_total = sum(i["qty"] * i["price"] for i in st.session_state["pinv_incentives"])
+                _pinv_subtotal    = _pinv_base + _pinv_extra_total
+                _pinv_tax         = int(_pinv_subtotal * _pinv_tax_rate / 100)
+                _pinv_total       = _pinv_subtotal + _pinv_tax
+
+                st.divider()
+                st.markdown(f"**小計：** ¥{_pinv_subtotal:,}")
+                st.markdown(f"**消費税（{_pinv_tax_rate}%）：** ¥{_pinv_tax:,}")
+                st.markdown(f"**合計：** ¥{_pinv_total:,}")
+
+                col_psv1, col_psv2 = st.columns(2)
+                with col_psv1:
+                    if st.button("💾 請求書を保存", use_container_width=True, key="pinv_save"):
+                        _pinv_save_doc = {
+                            "invoice_number": st.session_state.get("pinv_number", ""),
+                            "invoice_date":   str(_pinv_date),
+                            "due_date":       str(_pinv_due),
+                            "uid":            _pinv_user_sel,
+                            "user_name":      _pinv_name_free,
+                            "plan":           _pinv_plan,
+                            "plan_label":     _pinv_plan_label,
+                            "issuer_name":    _pinv_issuer_name,
+                            "invoice_no":     _pinv_invoice_no,
+                            "base_amount":    _pinv_base,
+                            "extras":         st.session_state["pinv_incentives"],
+                            "subtotal":       _pinv_subtotal,
+                            "tax_rate":       _pinv_tax_rate,
+                            "tax_amount":     _pinv_tax,
+                            "total":          _pinv_total,
+                            "remarks":        _pinv_remarks,
+                            "type":           "personal",
+                            "created_at":     _dt_pinv.datetime.utcnow().isoformat(),
+                        }
+                        _pinv_doc_id = st.session_state.get("pinv_number", "").replace("/", "-") or _dt_pinv.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+                        db.collection("invoices").document(_pinv_doc_id).set(_pinv_save_doc)
+                        st.success(f"✅ 請求書を保存しました（{_pinv_doc_id}）")
+
+                with col_psv2:
+                    if st.button("🖨️ 印刷・PDF出力", use_container_width=True, key="pinv_print"):
+                        _pinv_extra_rows = "".join([
+                            f"<tr><td>{i['name']}</td><td style='text-align:right'>{i['qty']}</td><td style='text-align:right'>¥{i['price']:,}</td><td style='text-align:right'>¥{i['qty']*i['price']:,}</td></tr>"
+                            for i in st.session_state["pinv_incentives"] if i["name"]
+                        ])
+                        _pinv_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>請求書</title>
+<style>
+body{{font-family:'Hiragino Sans','Yu Gothic',sans-serif;max-width:800px;margin:40px auto;padding:40px;font-size:13px;color:#111;}}
+h1{{font-size:24px;text-align:center;margin-bottom:30px;border-bottom:2px solid #000;padding-bottom:10px;}}
+.header{{display:flex;justify-content:space-between;margin-bottom:30px;}}
+.to{{font-size:16px;font-weight:bold;border-bottom:1px solid #000;padding-bottom:4px;margin-bottom:16px;}}
+.info{{font-size:12px;color:#333;}}
+table{{width:100%;border-collapse:collapse;margin:20px 0;}}
+th{{background:#f0f0f0;border:1px solid #999;padding:8px;text-align:center;}}
+td{{border:1px solid #ccc;padding:8px;}}
+.total-table{{width:40%;margin-left:auto;margin-top:10px;}}
+.total-table td{{border:none;padding:4px 8px;}}
+.total-row{{font-weight:bold;font-size:15px;border-top:2px solid #000;}}
+.remarks{{margin-top:20px;border:1px solid #ccc;padding:10px;min-height:60px;}}
+.bank{{margin-top:20px;font-size:12px;}}
+@media print{{button{{display:none;}}}}
+</style></head><body>
+<h1>請 求 書</h1>
+<div class="header">
+<div>
+<div class="to">{_pinv_name_free} 様</div>
+<div class="info">請求書番号：{st.session_state.get('pinv_number','')}</div>
+<div class="info">請求日：{str(_pinv_date)}</div>
+<div class="info">支払期限：{str(_pinv_due)}</div>
+<div class="info">プラン：{_pinv_plan_label}</div>
+</div>
+<div style="text-align:right">
+<div style="font-weight:bold;font-size:15px;">{_pinv_issuer_name}</div>
+<div class="info">〒{_pinv_issuer_zip}</div>
+<div class="info">{_pinv_issuer_addr}</div>
+<div class="info">TEL: {_pinv_issuer_tel}</div>
+<div class="info">登録番号: {_pinv_invoice_no}</div>
+</div>
+</div>
+<div style="text-align:right;font-size:18px;font-weight:bold;margin-bottom:20px;">
+ご請求金額：¥{_pinv_total:,}（税込）
+</div>
+<table>
+<tr><th>項目</th><th>数量</th><th>単価</th><th>金額</th></tr>
+<tr><td>ASCENDサービス利用料（{_pinv_plan_label}）</td><td style="text-align:right">1</td><td style="text-align:right">¥{_pinv_base:,}</td><td style="text-align:right">¥{_pinv_base:,}</td></tr>
+{_pinv_extra_rows}
+</table>
+<table class="total-table">
+<tr><td>小計</td><td style="text-align:right">¥{_pinv_subtotal:,}</td></tr>
+<tr><td>消費税（{_pinv_tax_rate}%）</td><td style="text-align:right">¥{_pinv_tax:,}</td></tr>
+<tr class="total-row"><td>合計</td><td style="text-align:right">¥{_pinv_total:,}</td></tr>
+</table>
+<div class="bank">
+<strong>【振込先】</strong><br>
+{_pinv_bank_name}　{_pinv_bank_branch}　{_pinv_bank_type}　{_pinv_bank_number}　{_pinv_bank_holder}
+</div>
+<div class="remarks"><strong>備考</strong><br>{_pinv_remarks.replace(chr(10),'<br>')}</div>
+</body></html>"""
+                        import base64 as _b64_pinv
+                        _html_b64_pinv = _b64_pinv.b64encode(_pinv_html.encode("utf-8")).decode()
+                        _btn_js_pinv = (
+                            "(function(){{"
+                            "var w=window.open('about:blank','_blank');"
+                            "w.document.open();"
+                            "w.document.write(decodeURIComponent(escape(atob('" + _html_b64_pinv + "'))));"
+                            "w.document.close();"
+                            "w.onload=function(){{w.focus();w.print();}};"
+                            "}})();"
+                        )
+                        st.components.v1.html(
+                            '<button onclick="' + _btn_js_pinv + '" style="background:#3b82f6;color:#fff;border:none;border-radius:8px;padding:14px 32px;font-size:15px;font-weight:700;cursor:pointer;width:100%;">🖨️ 請求書を新規タブで開いて印刷・PDF出力</button>',
+                            height=60
+                        )
+
+                # ── 発行済み一覧 ──────────────────────────────
+                st.divider()
+                st.markdown("#### 📋 発行済み個人請求書一覧")
+                try:
+                    _pinv_list = [d.to_dict() | {"doc_id": d.id} for d in db.collection("invoices").where("type", "==", "personal").stream()]
+                    _pinv_list.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+                    if not _pinv_list:
+                        st.info("発行済み請求書はありません。")
+                    else:
+                        for _pinv_item in _pinv_list:
+                            with st.expander(f"📄 {_pinv_item.get('invoice_number','')}｜{_pinv_item.get('user_name','')}｜¥{_pinv_item.get('total',0):,}｜{_pinv_item.get('invoice_date','')}"):
+                                st.write(f"**請求先:** {_pinv_item.get('user_name','')}　**プラン:** {_pinv_item.get('plan_label','')}")
+                                st.write(f"**請求日:** {_pinv_item.get('invoice_date','')}　**支払期限:** {_pinv_item.get('due_date','')}")
+                                st.write(f"**小計:** ¥{_pinv_item.get('subtotal',0):,}　**税率:** {_pinv_item.get('tax_rate',10)}%　**税額:** ¥{_pinv_item.get('tax_amount',0):,}　**合計:** ¥{_pinv_item.get('total',0):,}")
+                                if st.button("🗑️ 削除", key=f"pinv_del_{_pinv_item['doc_id']}"):
+                                    db.collection("invoices").document(_pinv_item["doc_id"]).delete()
+                                    st.success("削除しました")
+                                    st.rerun()
+                except Exception as _pinv_e:
+                    st.error(f"取得エラー: {_pinv_e}")
+
+        elif admin_menu == "🏢 ULTRA企業契約管理":
+            st.subheader("🏢 ULTRA企業契約管理")
+            st.caption("月額¥300,000＋インセンティブ｜顧問契約付き｜社員10名まで")
+
+            # ── 企業一覧 ──────────────────────────────────
+            try:
+                _ultra_corps = [
+                    d.to_dict() | {"doc_id": d.id}
+                    for d in db.collection("ultra_corporates").stream()
+                ]
+                _ultra_corps.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+            except Exception as _e:
+                _ultra_corps = []
+                st.error(f"取得エラー: {_e}")
+
+            # ── 新規企業登録 ──────────────────────────────
+            with st.expander("➕ 新規企業登録", expanded=False):
+                _corp_name   = st.text_input("企業名", key="ultra_corp_name")
+                _corp_tenant = st.text_input("企業管理コード（英数字）", key="ultra_corp_tenant")
+                _ultra_tenant_list = list_tenants(include_disabled=True)
+                _ultra_tenant_opts = [""] + [t["tenant_id"] for t in _ultra_tenant_list if t["tenant_id"] != "default"]
+                _ultra_tenant_labels = {t["tenant_id"]: f"{t['name']}　`{t['tenant_id']}`" for t in _ultra_tenant_list}
+                _ultra_tenant_labels[""] = "--- 業種を選択してください ---"
+                _corp_industry = st.selectbox(
+                    "業種設定",
+                    options=_ultra_tenant_opts,
+                    format_func=lambda x: _ultra_tenant_labels.get(x, x),
+                    key="ultra_corp_industry",
                 )
+                st.divider()
+                _admin_mode = st.radio(
+                    "管理者アカウント",
+                    ["既存ユーザーから選択", "新規作成"],
+                    key="ultra_admin_mode",
+                    horizontal=True,
+                )
+                if _admin_mode == "既存ユーザーから選択":
+                    _all_users = []
+                    try:
+                        for _ud in db.collection("users").stream():
+                            _udata = _ud.to_dict() or {}
+                            _all_users.append({"uid": _ud.id, "label": f"{_ud.id}　({_udata.get('plan','starter')})"})
+                        _all_users.sort(key=lambda x: x["uid"])
+                    except Exception:
+                        pass
+                    _corp_admin = st.selectbox(
+                        "管理者UID",
+                        options=[u["uid"] for u in _all_users],
+                        format_func=lambda x: next((u["label"] for u in _all_users if u["uid"] == x), x),
+                        key="ultra_corp_admin_select",
+                    )
+                    _corp_admin_pw = None
+                else:
+                    _corp_admin = st.text_input("新規管理者UID", key="ultra_corp_admin_new_uid")
+                    _corp_admin_pw = st.text_input("パスワード", type="password", key="ultra_corp_admin_pw")
+
+                if st.button("🏢 企業を登録", key="ultra_corp_register", use_container_width=True):
+                    if not _corp_name or not _corp_admin or not _corp_tenant or not _corp_industry:
+                        st.error("全項目を入力してください（業種設定は必須です）")
+                    elif _admin_mode == "新規作成" and not _corp_admin_pw:
+                        st.error("パスワードを入力してください")
+                    else:
+                        import datetime as _dt_ultra
+                        _corp_doc = {
+                            "company_name":        _corp_name,
+                            "admin_uid":           _corp_admin,
+                            "corporate_tenant_id": _corp_tenant,
+                            "industry":            _corp_industry,
+                            "member_uids":         [],
+                            "ultra_corporate":     True,
+                            "created_at":          _dt_ultra.datetime.utcnow().isoformat(),
+                            "max_members":         10,
+                        }
+                        db.collection("ultra_corporates").document(_corp_tenant).set(_corp_doc)
+                        _admin_payload = {
+                            "plan":                "ultra_admin",
+                            "ultra_corporate":     True,
+                            "ultra_role":          "admin",
+                            "corporate_tenant_id": _corp_tenant,
+                            "tenant_id":           _corp_industry,
+                        }
+                        if _admin_mode == "新規作成" and _corp_admin_pw:
+                            import hashlib as _hl, os as _os
+                            _salt = _os.urandom(16).hex()
+                            _iters = 150000
+                            _dk = _hl.pbkdf2_hmac("sha256", _corp_admin_pw.encode(), _salt.encode(), _iters)
+                            _admin_payload["pw_hash"] = _dk.hex()
+                            _admin_payload["pw_salt"] = _salt
+                            _admin_payload["pw_iters"] = _iters
+                            _admin_payload["uid"] = _corp_admin
+                        db.collection("users").document(_corp_admin).set(_admin_payload, merge=True)
+                        st.success(f"✅ {_corp_name} を登録しました。管理者: {_corp_admin}　業種: {_corp_industry}")
+                        st.rerun()
+
+            # ── 企業一覧表示 ──────────────────────────────
+            if not _ultra_corps:
+                st.info("ULTRA企業契約はまだありません。")
+            else:
+                for _corp in _ultra_corps:
+                    _cname   = _corp.get("company_name", "")
+                    _ctenant = _corp.get("corporate_tenant_id", "")
+                    _cadmin  = _corp.get("admin_uid", "")
+                    _cmembers = _corp.get("member_uids", [])
+                    _cmax    = _corp.get("max_members", 10)
+                    with st.expander(f"🏢 {_cname}｜テナント: {_ctenant}｜メンバー: {len(_cmembers)+1}/{_cmax}名（管理者1名含む）"):
+                        st.write(f"**👑 管理者UID:** {_cadmin}　（APEX相当・全機能解放）")
+                        st.write(f"**🏷️ 業種:** {_corp.get('industry', '未設定')}")
+                        st.divider()
+                        st.write("**👥 メンバー一覧：**")
+                        if _cmembers:
+                            for _mi, _muid in enumerate(_cmembers):
+                                st.write(f"　{_mi+1}. {_muid}　（PRO相当）")
+                        else:
+                            st.write("　メンバーなし")
+
+                        # メンバー追加
+                        _new_member = st.text_input("メンバーUID追加", key=f"ultra_add_{_ctenant}")
+                        if st.button("➕ メンバー追加", key=f"ultra_add_btn_{_ctenant}", use_container_width=True):
+                            if not _new_member:
+                                st.error("UIDを入力してください")
+                            elif len(_cmembers) >= _cmax - 1:
+                                st.error(f"メンバー上限({_cmax - 1}名)に達しています")
+                            elif _new_member in _cmembers:
+                                st.error("既に登録済みです")
+                            else:
+                                _cmembers.append(_new_member)
+                                db.collection("ultra_corporates").document(_ctenant).update({
+                                    "member_uids": _cmembers
+                                })
+                                _corp_ind = _corp.get("industry", "default")
+                                db.collection("users").document(_new_member).set({
+                                    "plan":                "ultra_member",
+                                    "ultra_corporate":     True,
+                                    "ultra_role":          "member",
+                                    "corporate_tenant_id": _ctenant,
+                                    "tenant_id":           _corp_ind,
+                                }, merge=True)
+                                st.success(f"✅ {_new_member} を追加しました（業種: {_corp_ind}）")
+                                st.rerun()
+
+                        # メンバー削除
+                        if _cmembers:
+                            _del_member = st.selectbox("メンバー削除", [""] + _cmembers, key=f"ultra_del_{_ctenant}")
+                            if st.button("🗑️ メンバー削除", key=f"ultra_del_btn_{_ctenant}", use_container_width=True):
+                                if not _del_member:
+                                    st.error("削除するメンバーを選択してください")
+                                else:
+                                    _cmembers.remove(_del_member)
+                                    db.collection("ultra_corporates").document(_ctenant).update({
+                                        "member_uids": _cmembers
+                                    })
+                                    db.collection("users").document(_del_member).update({
+                                        "plan":            "starter",
+                                        "ultra_corporate": False,
+                                        "ultra_role":      "",
+                                        "corporate_tenant_id": "",
+                                        "tenant_id":       "default",
+                                    })
+                                    st.success(f"✅ {_del_member} を削除しました")
+                                    st.rerun()
+
+                        # 企業削除
+                        st.divider()
+                        if st.button(f"🗑️ {_cname} を削除", key=f"ultra_corp_del_{_ctenant}", use_container_width=True):
+                            db.collection("ultra_corporates").document(_ctenant).delete()
+                            st.success(f"✅ {_cname} を削除しました")
+                            st.rerun()
 
         elif admin_menu == "📩 お問い合わせ":
             st.subheader("📩 お問い合わせ管理")
