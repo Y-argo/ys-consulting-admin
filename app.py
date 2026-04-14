@@ -262,6 +262,7 @@ def inject_theme_css(tenant_id: str) -> None:
 }}
 [data-testid="stSidebar"] {{
   background: var(--color-sidebar-bg) !important;
+  border-right: none !important;
 }}
 [data-testid="stChatMessage"][data-testid*="user"] .stChatMessageContent {{
   background: var(--color-user-bubble) !important;
@@ -950,6 +951,14 @@ button[data-testid="stSidebarCollapseButton"] {
 /* テーブル横スクロール */
 [data-testid="stDataFrame"] { overflow: auto !important; }
 
+/* サイドバーの縦線（リサイズハンドル）を非表示 */
+[data-testid="stSidebarResizeHandle"] {
+    display: none !important;
+    visibility: hidden !important;
+    width: 0 !important;
+    min-width: 0 !important;
+}
+
 .ys-header {
     border-bottom: 2px solid #1E3A8A;
     margin-bottom: 12px;
@@ -995,6 +1004,17 @@ button[data-testid="stSidebarCollapseButton"] {
         z-index: 99998 !important;
         box-shadow: 4px 0 12px rgba(0,0,0,0.25) !important;
         overflow-y: auto !important;
+        border-right: none !important;
+    }
+    section[data-testid="stSidebar"] > div {
+        border-right: none !important;
+    }
+    section[data-testid="stSidebar"]::-webkit-scrollbar {
+        display: none !important;
+        width: 0px !important;
+    }
+    section[data-testid="stSidebar"] * {
+        scrollbar-width: none !important;
     }
 
     /* サイドバーが閉じているときはメインに被らない */
@@ -15421,6 +15441,7 @@ ASCEND は、利用ログや評価情報をもとに**内部モデルを継続�
                     "🏢 ULTRA企業契約管理",
                     "📄 請求書発行",
                     "📄 個人請求書発行",
+                    "📢 広告管理",
                 ],
                 horizontal=False,
                 key="admin_main_menu"
@@ -18538,6 +18559,181 @@ try:
                         set_user_plan(_feat_target_uid, _plan_sel)
                         st.success(f"✅ {_feat_target_uid} のプランを {_PLAN_LABELS[_plan_sel]} に変更しました。")
                         st.rerun()
+
+                    # ── APEX/ULTRA専用 ユーザーAI設定 ─────────────
+                    if _plan_sel in ("apex", "ultra_member", "ultra_admin"):
+                        st.write("### 🤖 ユーザー専用AI設定（APEX/ULTRA限定）")
+                        st.caption("このユーザー専用のAI設定を行います。説明・指示・会話のきっかけ・知識ファイルを個別に管理します。")
+
+                        _ai_doc = get_user_doc(_feat_target_uid)
+                        _ai_data = _ai_doc.to_dict() if _ai_doc.exists else {}
+                        _ai_desc    = _ai_data.get("ai_description", "")
+                        _ai_instr   = _ai_data.get("custom_sys_prompt", "")
+                        _ai_instr_mode = _ai_data.get("custom_prompt_mode", "append")
+                        _ai_starters = _ai_data.get("conversation_starters", [])
+
+                        with st.form(key=f"user_ai_config_form_{_feat_target_uid}", clear_on_submit=False):
+                            st.markdown("**説明**")
+                            _new_desc = st.text_area(
+                                "このユーザー向けAIの用途・役割説明",
+                                value=_ai_desc,
+                                height=80,
+                                key=f"ai_desc_{_feat_target_uid}",
+                                placeholder="例：お客様・キャスト・求人などの質疑応答用",
+                            )
+                            st.markdown("**指示**")
+                            _new_instr_mode = st.radio(
+                                "適用モード",
+                                ["append", "replace"],
+                                index=0 if _ai_instr_mode == "append" else 1,
+                                format_func=lambda m: "append（テナントプロンプトの末尾に追記）" if m == "append" else "replace（テナントプロンプトを完全上書き）",
+                                horizontal=True,
+                                key=f"ai_instr_mode_{_feat_target_uid}",
+                            )
+                            _new_instr = st.text_area(
+                                "AIへの個別指示",
+                                value=_ai_instr,
+                                height=200,
+                                key=f"ai_instr_{_feat_target_uid}",
+                                placeholder="例：あなたはCLUB華のスタッフ専用AIアシスタントです。\n● 情報は虚偽や根拠のない創作は絶対にしないでください。",
+                            )
+                            st.markdown("**会話のきっかけ**")
+                            _starters_text = st.text_area(
+                                "1行1件で入力（最大4件）",
+                                value="\n".join(_ai_starters[:4]),
+                                height=100,
+                                key=f"ai_starters_{_feat_target_uid}",
+                                placeholder="例：\nランク条件\nキャスト紹介\nキャンペーン情報",
+                            )
+                            _ai_save = st.form_submit_button("💾 AI設定を保存", use_container_width=True)
+
+                        if _ai_save:
+                            _new_starters = [s.strip() for s in _starters_text.split("\n") if s.strip()][:4]
+                            users_col().document(_feat_target_uid).set({
+                                "ai_description":        _new_desc.strip(),
+                                "custom_sys_prompt":     _new_instr.strip(),
+                                "custom_prompt_mode":    _new_instr_mode,
+                                "conversation_starters": _new_starters,
+                                "updated_at":            firestore.SERVER_TIMESTAMP,
+                            }, merge=True)
+                            st.success(f"✅ {_feat_target_uid} のAI設定を保存しました。")
+                            st.rerun()
+
+                        # ── 知識ファイル管理 ──────────────────────
+                        st.markdown("**知識**")
+                        st.caption("アップロードされたファイルはこのユーザー専用のRAG知識として使用されます。")
+
+                        _user_tenant_id = f"user__{_feat_target_uid}"
+                        _user_sources = []
+                        try:
+                            _user_links = list(
+                                tenant_source_links_col()
+                                .where("tenant_id", "==", _user_tenant_id)
+                                .limit(50)
+                                .stream()
+                            )
+                            for _ul in _user_links:
+                                _ul_data = _ul.to_dict() or {}
+                                _sid = _ul_data.get("source_id", "")
+                                if _sid:
+                                    _src_doc = db.collection("sources").document(_sid).get()
+                                    if _src_doc.exists:
+                                        _src_data = _src_doc.to_dict() or {}
+                                        _user_sources.append({
+                                            "source_id": _sid,
+                                            "title":     _src_data.get("title", _sid),
+                                            "link_id":   _ul.id,
+                                        })
+                        except Exception as _use:
+                            st.warning(f"知識ファイル取得エラー: {_use}")
+
+                        if _user_sources:
+                            for _us in _user_sources:
+                                _uc1, _uc2 = st.columns([0.85, 0.15])
+                                with _uc1:
+                                    st.write(f"📄 {_us['title']}")
+                                with _uc2:
+                                    if st.button("🗑️", key=f"del_user_src_{_us['source_id']}"):
+                                        try:
+                                            tenant_source_links_col().document(_us["link_id"]).delete()
+                                            st.success(f"削除しました: {_us['title']}")
+                                            st.rerun()
+                                        except Exception as _de:
+                                            st.error(f"削除エラー: {_de}")
+                        else:
+                            st.info("知識ファイルはまだありません。")
+
+                        _kf_uploads = st.file_uploader(
+                            "ファイルをアップロードする",
+                            type=["txt", "md", "csv", "xlsx", "xls", "ods", "odt", "pdf"],
+                            key=f"user_knowledge_upload_{_feat_target_uid}",
+                            accept_multiple_files=True,
+                        )
+                        if _kf_uploads:
+                            for _kf in _kf_uploads:
+                                try:
+                                    _kf_bytes = _kf.read()
+                                    _kf_name  = _kf.name
+                                    _kf_ext   = _kf_name.rsplit(".", 1)[-1].lower() if "." in _kf_name else "txt"
+                                    _kf_source_id = f"user__{_feat_target_uid}__{_kf_name}"
+                                    _kf_text = ""
+                                    if _kf_ext in ("txt", "md", "csv"):
+                                        _kf_text = _kf_bytes.decode("utf-8", errors="replace")
+                                    elif _kf_ext == "odt":
+                                        try:
+                                            import zipfile, re as _re2
+                                            with zipfile.ZipFile(io.BytesIO(_kf_bytes)) as _z:
+                                                with _z.open("content.xml") as _cx:
+                                                    _xml = _cx.read().decode("utf-8", errors="replace")
+                                            _kf_text = _re2.sub(r"<[^>]+>", " ", _xml)
+                                        except Exception:
+                                            _kf_text = ""
+                                    elif _kf_ext in ("xlsx", "xls"):
+                                        try:
+                                            import pandas as _pd2
+                                            _df_kf = _pd2.read_excel(io.BytesIO(_kf_bytes), sheet_name=None)
+                                            _kf_text = "\n".join(
+                                                f"[{sn}]\n{df.to_string(index=False)}"
+                                                for sn, df in _df_kf.items()
+                                            )
+                                        except Exception:
+                                            _kf_text = ""
+                                    if not _kf_text.strip():
+                                        st.warning(f"⚠️ {_kf_name}: テキスト抽出に失敗しました（対応外または空ファイル）。")
+                                        continue
+                                    _gcs_path = f"users/{_feat_target_uid}/knowledge/{_kf_name}"
+                                    _ct_map = {
+                                        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        "xls":  "application/vnd.ms-excel",
+                                        "odt":  "application/vnd.oasis.opendocument.text",
+                                        "pdf":  "application/pdf",
+                                    }
+                                    _kf_ct = _ct_map.get(_kf_ext, "text/plain")
+                                    _gcs_put_bytes(CENTRAL_BLOB_BUCKET, _gcs_path, _kf_bytes, _kf_ct)
+                                    _wrote = upsert_doc_chunks(
+                                        tenant_id=_user_tenant_id,
+                                        doc_id=_kf_source_id,
+                                        title=_kf_name,
+                                        category="ユーザー知識",
+                                        source_type="file",
+                                        content_text=_kf_text,
+                                    )
+                                    _link_id = tenant_source_link_doc_id(_user_tenant_id, _kf_source_id)
+                                    tenant_source_links_col().document(_link_id).set({
+                                        "tenant_id":   _user_tenant_id,
+                                        "source_id":   _kf_source_id,
+                                        "title":       _kf_name,
+                                        "category":    "ユーザー知識",
+                                        "source_type": "file",
+                                        "gcs_path":    _gcs_path,
+                                        "enabled":     True,
+                                        "priority":    0,
+                                        "created_at":  firestore.SERVER_TIMESTAMP,
+                                    }, merge=True)
+                                    st.success(f"✅ {_kf_name} をアップロードしました。（{_wrote}チャンク）")
+                                except Exception as _kfe:
+                                    st.error(f"❌ {_kf.name} エラー: {_kfe}")
+
                     st.divider()
 
                     # ── プリセット ───────────────────────────────
@@ -24226,6 +24422,166 @@ Ys Consulting Office（以下「甲」という）と、本契約に同意した
             )
             st.components.v1.html(_lic_html, height=900, scrolling=True)
 
+            st.divider()
+            st.markdown("### 📢 広告掲載契約書")
+            import base64 as _b64_ad
+            _ad_lic_html = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>広告掲載契約書</title>
+<style>
+body{font-family:'Hiragino Sans','Yu Gothic',sans-serif;max-width:860px;margin:40px auto;padding:40px;font-size:13px;color:#111;line-height:1.9;}
+h1{font-size:22px;text-align:center;margin-bottom:8px;letter-spacing:2px;}
+h2{font-size:14px;margin-top:28px;margin-bottom:6px;border-left:4px solid #333;padding-left:8px;}
+p{margin:6px 0;}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:12px;}
+th{background:#f0f0f0;border:1px solid #999;padding:7px;text-align:center;}
+td{border:1px solid #ccc;padding:7px;text-align:center;}
+td:first-child{text-align:left;}
+.subtitle{text-align:center;font-size:13px;color:#444;margin-bottom:4px;}
+.preamble{margin:20px 0 24px;padding:14px;border:1px solid #ccc;background:#fafafa;}
+.sign{display:flex;justify-content:space-between;margin-top:48px;gap:40px;}
+.sign-box{flex:1;border-top:1px solid #000;padding-top:10px;font-size:12px;line-height:2;}
+.divider{border:none;border-top:2px solid #000;margin:30px 0;}
+.issuer{margin-top:30px;font-size:12px;line-height:2;}
+@media print{button{display:none;} body{margin:20px;padding:20px;}}
+</style></head><body>
+<h1>ASCEND 広告掲載契約書</h1>
+<p class="subtitle">（AIコンサルティングプラットフォーム内バナー広告掲載）</p>
+<div class="preamble">
+Ys Consulting Office（以下「甲」という）と、本契約に同意した広告主（以下「乙」という）は、甲が運営するAIコンサルティングプラットフォーム「ASCEND」内への広告掲載に関し、以下のとおり契約を締結する。
+</div>
+<h2>第1条（定義）</h2>
+<p>1. 「広告枠」とは、本サービス内のサイドバー下部（240×160px）およびマイページRANK STATUS直下（320×100px）の表示領域をいう。</p>
+<p>2. 「クリック数」とは、利用者が広告バナーをクリックした回数をいう。</p>
+<p>3. 「基本料金」とは、掲載プランに応じた固定月額料金をいう。</p>
+<p>4. 「インセンティブ料金」とは、クリック数が閾値を超過した場合に発生する従量料金をいう。</p>
+<h2>第2条（掲載プランおよび料金）</h2>
+<table>
+<tr><th>プラン</th><th>掲載位置</th><th>期間</th><th>基本料金</th><th>インセンティブ（閾値超過分）</th></tr>
+<tr><td>バナーライト</td><td>サイドバー or マイページ 1枠</td><td>1ヶ月</td><td>¥30,000／月</td><td>100件超：¥100／クリック</td></tr>
+<tr><td>バナースタンダード</td><td>サイドバー＋マイページ 両枠</td><td>1ヶ月</td><td>¥50,000／月</td><td>200件超：¥100／クリック</td></tr>
+<tr><td>バナープレミアム</td><td>両枠・全業種表示</td><td>1ヶ月</td><td>¥100,000／月</td><td>500件超：¥80／クリック</td></tr>
+<tr><td>スポット掲載</td><td>1枠・単発</td><td>2週間</td><td>¥20,000／回</td><td>50件超：¥120／クリック</td></tr>
+</table>
+<h2>第3条（インセンティブ料金の計算）</h2>
+<p>1. インセンティブ料金は以下の計算式により算出する。</p>
+<p>　　請求額 ＝ 基本料金 ＋（閾値超過クリック数 × 単価）</p>
+<p>2. クリック数は甲のシステムログを根拠とし、月次レポートにて乙に開示する。</p>
+<p>3. スポット掲載プランのインセンティブは掲載期間終了時に集計する。</p>
+<h2>第4条（広告素材）</h2>
+<p>1. 乙は、甲所定の形式（WebP・PNG・JPG・GIF）および指定サイズの広告素材を掲載開始3営業日前までに甲に提供するものとする。</p>
+<p>2. 甲は、広告素材が公序良俗に反する・虚偽誇大表現・法令違反と判断した場合、掲載を拒否または停止できる。</p>
+<p>3. 広告素材の著作権は乙に帰属し、乙は甲に掲載に必要な権利を許諾するものとする。</p>
+<h2>第5条（支払）</h2>
+<p>1. 基本料金は掲載開始前に前払いとする。</p>
+<p>2. インセンティブ料金は翌月末日までに甲指定の方法で支払うものとする。</p>
+<p>3. 支払期日を過ぎた場合、年14.6%の遅延損害金を請求できるものとする。</p>
+<h2>第6条（契約の解除）</h2>
+<p>1. 乙が本契約に違反した場合、甲は催告なく直ちに掲載を停止し本契約を解除できる。</p>
+<p>2. 乙の都合によるキャンセルは、掲載開始7日前まで無料、以降は基本料金の50%を違約金として請求する。</p>
+<h2>第7条（免責）</h2>
+<p>1. 甲は、広告掲載による乙の売上・効果について一切保証しない。</p>
+<p>2. システム障害等やむを得ない事由による掲載停止の場合、甲は停止期間相当額を日割りで返金する。</p>
+<h2>第8条（準拠法および管轄）</h2>
+<p>本契約は日本法に準拠し、東京地方裁判所を第一審の専属的合意管轄裁判所とする。</p>
+<hr class="divider">
+<div class="issuer"><strong>【甲】</strong><br>事業者名：Ys Consulting Office<br>所在地：〒120-0045 東京都足立区千住桜木2-17-2-508<br>電話番号：080-8030-1207</div>
+<hr class="divider">
+<div class="sign"><div class="sign-box">契約締結日：　　　　年　　月　　日<br><br><strong>【乙】</strong><br>氏名（法人名）：___________________________<br>所在地：___________________________<br>電話番号：___________________________<br>代表者（担当者）：___________________________ （署名）</div></div>
+</body></html>"""
+            _ad_lic_b64 = _b64_ad.b64encode(_ad_lic_html.encode("utf-8")).decode()
+            _ad_lic_js = (
+                "(function(){{"
+                "var w=window.open('about:blank','_blank');"
+                "w.document.open();"
+                "w.document.write(decodeURIComponent(escape(atob('" + _ad_lic_b64 + "'))));"
+                "w.document.close();"
+                "w.onload=function(){{w.focus();w.print();}};"
+                "}})();"
+            )
+            st.components.v1.html(
+                '<button onclick="' + _ad_lic_js + '" style="background:#3b82f6;color:#fff;border:none;border-radius:8px;padding:12px 32px;font-size:15px;font-weight:700;cursor:pointer;width:100%;">🖨️ 広告掲載契約書を印刷・PDF出力</button>',
+                height=60
+            )
+            st.components.v1.html(_ad_lic_html, height=900, scrolling=True)
+
+            st.divider()
+            st.markdown("### 🤝 コンサルティング業務委託契約書")
+            import base64 as _b64_con
+            _con_lic_html = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>コンサルティング業務委託契約書</title>
+<style>
+body{font-family:'Hiragino Sans','Yu Gothic',sans-serif;max-width:860px;margin:40px auto;padding:40px;font-size:13px;color:#111;line-height:1.9;}
+h1{font-size:22px;text-align:center;margin-bottom:8px;letter-spacing:2px;}
+h2{font-size:14px;margin-top:28px;margin-bottom:6px;border-left:4px solid #333;padding-left:8px;}
+p{margin:6px 0;}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:12px;}
+th{background:#f0f0f0;border:1px solid #999;padding:7px;text-align:center;}
+td{border:1px solid #ccc;padding:7px;text-align:center;}
+td:first-child{text-align:left;}
+.subtitle{text-align:center;font-size:13px;color:#444;margin-bottom:4px;}
+.preamble{margin:20px 0 24px;padding:14px;border:1px solid #ccc;background:#fafafa;}
+.sign{display:flex;justify-content:space-between;margin-top:48px;gap:40px;}
+.sign-box{flex:1;border-top:1px solid #000;padding-top:10px;font-size:12px;line-height:2;}
+.divider{border:none;border-top:2px solid #000;margin:30px 0;}
+.issuer{margin-top:30px;font-size:12px;line-height:2;}
+@media print{button{display:none;} body{margin:20px;padding:20px;}}
+</style></head><body>
+<h1>コンサルティング業務委託契約書</h1>
+<p class="subtitle">（Ys Consulting Office 個別コンサルティングサービス）</p>
+<div class="preamble">
+Ys Consulting Office（以下「甲」という）と、本契約に同意した依頼者（以下「乙」という）は、甲が提供するコンサルティング業務の委託に関し、以下のとおり契約を締結する。
+</div>
+<h2>第1条（業務内容）</h2>
+<p>甲は、乙の依頼に基づき、経営戦略・事業計画・マーケティング・財務・組織等に関するコンサルティング業務を行う。</p>
+<h2>第2条（サービスプランおよび料金）</h2>
+<table>
+<tr><th>プラン</th><th>内容</th><th>料金</th></tr>
+<tr><td>スポット相談</td><td>1回60分・単発</td><td>¥30,000／回</td></tr>
+<tr><td>ライト顧問</td><td>月2回×60分・メール相談無制限</td><td>¥50,000／月</td></tr>
+<tr><td>スタンダード顧問</td><td>月4回×60分・メール相談無制限・月次レポート</td><td>¥100,000／月</td></tr>
+<tr><td>プレミアム顧問</td><td>無制限相談・月次戦術レポート・優先対応</td><td>¥200,000／月</td></tr>
+<tr><td>スポット資料作成</td><td>戦略資料・分析レポート作成</td><td>¥50,000／件〜</td></tr>
+</table>
+<h2>第3条（契約期間）</h2>
+<p>1. スポット相談・スポット資料作成は業務完了をもって終了とする。</p>
+<p>2. 顧問プランの最低契約期間は3ヶ月とし、以降は1ヶ月単位で自動更新とする。</p>
+<p>3. 更新停止は契約期間満了の30日前までに書面にて申し出るものとする。</p>
+<h2>第4条（支払）</h2>
+<p>1. 顧問プランの料金は毎月1日を起算日とし、当月分を前払いとする。</p>
+<p>2. スポット相談・資料作成は業務開始前に全額前払いとする。</p>
+<p>3. 支払期日を過ぎた場合、年14.6%の遅延損害金を請求できるものとする。</p>
+<h2>第5条（秘密保持）</h2>
+<p>甲および乙は、本契約の履行上知り得た相手方の秘密情報を第三者に開示・漏洩してはならない。本条の義務は契約終了後3年間存続する。</p>
+<h2>第6条（成果物の権利帰属）</h2>
+<p>1. 甲が作成した資料・レポート等の成果物の著作権は、対価の支払い完了をもって乙に譲渡する。</p>
+<p>2. 甲は、成果物を匿名化した上で自己のノウハウとして活用できるものとする。</p>
+<h2>第7条（免責）</h2>
+<p>1. 甲のコンサルティング内容は情報提供・助言であり、その実施による結果について甲は責任を負わない。</p>
+<p>2. 甲の損害賠償責任は、乙が支払った直近3ヶ月の報酬総額を上限とする。</p>
+<h2>第8条（解約）</h2>
+<p>1. 顧問プランは第3条に定める方法で解約できる。</p>
+<p>2. 乙の都合による解約の場合、残存期間の報酬50%を違約金として請求できる。</p>
+<h2>第9条（準拠法および管轄）</h2>
+<p>本契約は日本法に準拠し、東京地方裁判所を第一審の専属的合意管轄裁判所とする。</p>
+<hr class="divider">
+<div class="issuer"><strong>【甲】</strong><br>事業者名：Ys Consulting Office<br>所在地：〒120-0045 東京都足立区千住桜木2-17-2-508<br>電話番号：080-8030-1207</div>
+<hr class="divider">
+<div class="sign"><div class="sign-box">契約締結日：　　　　年　　月　　日<br><br><strong>【乙】</strong><br>氏名（法人名）：___________________________<br>所在地：___________________________<br>電話番号：___________________________<br>代表者（担当者）：___________________________ （署名）</div></div>
+</body></html>"""
+            _con_lic_b64 = _b64_con.b64encode(_con_lic_html.encode("utf-8")).decode()
+            _con_lic_js = (
+                "(function(){{"
+                "var w=window.open('about:blank','_blank');"
+                "w.document.open();"
+                "w.document.write(decodeURIComponent(escape(atob('" + _con_lic_b64 + "'))));"
+                "w.document.close();"
+                "w.onload=function(){{w.focus();w.print();}};"
+                "}})();"
+            )
+            st.components.v1.html(
+                '<button onclick="' + _con_lic_js + '" style="background:#3b82f6;color:#fff;border:none;border-radius:8px;padding:12px 32px;font-size:15px;font-weight:700;cursor:pointer;width:100%;">🖨️ コンサルティング業務委託契約書を印刷・PDF出力</button>',
+                height=60
+            )
+            st.components.v1.html(_con_lic_html, height=900, scrolling=True)
+
         elif admin_menu == "📄 請求書発行":
             st.subheader("📄 請求書発行")
             import datetime as _dt_inv
@@ -24272,6 +24628,14 @@ Ys Consulting Office（以下「甲」という）と、本契約に同意した
                 _inv_corp_sel_name = st.selectbox("請求先企業", list(_inv_corp_opts.keys()), key="inv_corp_sel")
                 _inv_corp = _inv_corp_opts[_inv_corp_sel_name]
 
+                # ── 請求先詳細情報（ultra_corporatesに住所等がないため手入力）──
+                with st.expander("📋 請求先詳細情報", expanded=True):
+                    _inv_to_zip     = st.text_input("請求先 郵便番号", value=st.session_state.get(f"inv_to_zip_{_inv_corp_sel_name}", ""), key=f"inv_to_zip_{_inv_corp_sel_name}")
+                    _inv_to_addr    = st.text_input("請求先 住所",     value=st.session_state.get(f"inv_to_addr_{_inv_corp_sel_name}", ""), key=f"inv_to_addr_{_inv_corp_sel_name}")
+                    _inv_to_dept    = st.text_input("請求先 部署名",   value=st.session_state.get(f"inv_to_dept_{_inv_corp_sel_name}", ""), key=f"inv_to_dept_{_inv_corp_sel_name}")
+                    _inv_to_contact = st.text_input("請求先 担当者名", value=st.session_state.get(f"inv_to_contact_{_inv_corp_sel_name}", ""), key=f"inv_to_contact_{_inv_corp_sel_name}")
+                    _inv_to_tel     = st.text_input("請求先 電話番号", value=st.session_state.get(f"inv_to_tel_{_inv_corp_sel_name}", ""), key=f"inv_to_tel_{_inv_corp_sel_name}")
+
                 col1, col2 = st.columns(2)
                 with col1:
                     _inv_date = st.date_input("請求日", value=_dt_inv.date.today(), key="inv_date")
@@ -24284,37 +24648,122 @@ Ys Consulting Office（以下「甲」という）と、本契約に同意した
                 st.divider()
 
                 # ── 明細 ──────────────────────────────
-                st.markdown("#### 明細")
-                # 固定：顧問契約料
-                _inv_base = st.number_input("顧問契約料（円）", value=300000, step=1000, key="inv_base")
+                st.markdown("#### 明細（複数契約対応）")
 
-                # インセンティブ（複数行）
-                st.markdown("**インセンティブ明細**")
-                if "inv_incentives" not in st.session_state:
-                    st.session_state["inv_incentives"] = [{"name": "", "qty": 1, "price": 0}]
+                # ── 契約種別マスタ ──────────────────────────────
+                _inv_type_defaults = {
+                    "ULTRA顧問契約":               {"base": 300000, "threshold": 0,   "incentive_unit": 0,   "label": "ULTRA顧問契約料（ASCENDサービス利用料）"},
+                    "広告掲載（バナーライト）":     {"base": 30000,  "threshold": 100, "incentive_unit": 100, "label": "広告掲載料（バナーライト・1枠/1ヶ月）"},
+                    "広告掲載（バナースタンダード）":{"base": 50000,  "threshold": 200, "incentive_unit": 100, "label": "広告掲載料（バナースタンダード・両枠/1ヶ月）"},
+                    "広告掲載（バナープレミアム）":  {"base": 100000, "threshold": 500, "incentive_unit": 80,  "label": "広告掲載料（バナープレミアム・全業種/1ヶ月）"},
+                    "広告掲載（スポット掲載）":     {"base": 20000,  "threshold": 50,  "incentive_unit": 120, "label": "広告掲載料（スポット掲載・1枠/2週間）"},
+                    "コンサル（スポット相談）":     {"base": 30000,  "threshold": 0,   "incentive_unit": 0,   "label": "コンサルティング料（スポット相談・60分）"},
+                    "コンサル（ライト顧問）":       {"base": 50000,  "threshold": 0,   "incentive_unit": 0,   "label": "コンサルティング料（ライト顧問）"},
+                    "コンサル（スタンダード顧問）": {"base": 100000, "threshold": 0,   "incentive_unit": 0,   "label": "コンサルティング料（スタンダード顧問）"},
+                    "コンサル（プレミアム顧問）":   {"base": 200000, "threshold": 0,   "incentive_unit": 0,   "label": "コンサルティング料（プレミアム顧問）"},
+                    "コンサル（スポット資料作成）": {"base": 50000,  "threshold": 0,   "incentive_unit": 0,   "label": "コンサルティング料（スポット資料作成）"},
+                    "カスタム":                    {"base": 0,      "threshold": 0,   "incentive_unit": 0,   "label": "サービス料"},
+                }
+                _inv_type_keys = list(_inv_type_defaults.keys())
 
-                for _ii, _item in enumerate(st.session_state["inv_incentives"]):
-                    _ic1, _ic2, _ic3, _ic4 = st.columns([4, 1, 2, 1])
-                    with _ic1:
-                        _item["name"] = st.text_input("項目名", value=_item["name"], key=f"inv_inc_name_{_ii}")
-                    with _ic2:
-                        _item["qty"] = st.number_input("数量", value=_item["qty"], min_value=1, key=f"inv_inc_qty_{_ii}")
-                    with _ic3:
-                        _item["price"] = st.number_input("単価（円）", value=_item["price"], step=1000, key=f"inv_inc_price_{_ii}")
-                    with _ic4:
-                        if st.button("🗑️", key=f"inv_inc_del_{_ii}") and len(st.session_state["inv_incentives"]) > 1:
-                            st.session_state["inv_incentives"].pop(_ii)
+                # ── 契約行の初期化 ──────────────────────────────
+                if "inv_lines" not in st.session_state:
+                    st.session_state["inv_lines"] = [{"type": "ULTRA顧問契約", "base": 300000, "clicks": 0, "incentive": 0, "label": "ULTRA顧問契約料（ASCENDサービス利用料）"}]
+
+                # ── 各契約行の入力 ──────────────────────────────
+                for _li, _line in enumerate(st.session_state["inv_lines"]):
+                    st.markdown(f"**契約 {_li+1}**")
+                    _lc1, _lc2 = st.columns([4, 1])
+                    with _lc1:
+                        _prev_type = _line.get("type", "ULTRA顧問契約")
+                        _prev_idx  = _inv_type_keys.index(_prev_type) if _prev_type in _inv_type_keys else 0
+                        _line_type = st.selectbox(
+                            "請求種別",
+                            _inv_type_keys,
+                            index=_prev_idx,
+                            key=f"inv_line_type_{_li}"
+                        )
+                    with _lc2:
+                        if st.button("🗑️ 削除", key=f"inv_line_del_{_li}") and len(st.session_state["inv_lines"]) > 1:
+                            st.session_state["inv_lines"].pop(_li)
                             st.rerun()
 
-                if st.button("➕ インセンティブ行を追加", key="inv_inc_add"):
-                    st.session_state["inv_incentives"].append({"name": "", "qty": 1, "price": 0})
+                    _ltd = _inv_type_defaults.get(_line_type, _inv_type_defaults["カスタム"])
+                    _line["type"]  = _line_type
+                    _line["label"] = _ltd["label"]
+                    _line["base"]  = st.number_input(
+                        _ltd["label"] + "（円）",
+                        value=_ltd["base"],
+                        step=1000,
+                        key=f"inv_line_base_{_li}_{_line_type}"
+                    )
+                    # 広告掲載のみクリックインセンティブ入力
+                    _line["incentive"] = 0
+                    if _line_type.startswith("広告掲載") and _ltd["threshold"] > 0:
+                        st.markdown(f"📊 クリックインセンティブ（閾値: {_ltd['threshold']}件超 × ¥{_ltd['incentive_unit']}/クリック）")
+                        _line["clicks"] = st.number_input(
+                            "当月クリック数",
+                            min_value=0,
+                            value=_line.get("clicks", 0),
+                            step=1,
+                            key=f"inv_line_clicks_{_li}"
+                        )
+                        _over = max(0, _line["clicks"] - _ltd["threshold"])
+                        _line["incentive"] = _over * _ltd["incentive_unit"]
+                        if _over > 0:
+                            st.info(f"閾値超過: {_over}件 × ¥{_ltd['incentive_unit']} = ¥{_line['incentive']:,}")
+                        else:
+                            st.info(f"クリック数が閾値（{_ltd['threshold']}件）以下のためインセンティブなし")
+
+                    # 割引入力
+                    _dc1, _dc2 = st.columns([2, 3])
+                    with _dc1:
+                        _line["discount_type"] = st.selectbox(
+                            "割引種別",
+                            ["なし", "金額割引（円）", "率割引（%）"],
+                            index=["なし", "金額割引（円）", "率割引（%）"].index(_line.get("discount_type", "なし")),
+                            key=f"inv_line_disc_type_{_li}"
+                        )
+                    with _dc2:
+                        if _line["discount_type"] == "なし":
+                            _line["discount_val"] = 0
+                            _line["discount_amt"] = 0
+                        elif _line["discount_type"] == "金額割引（円）":
+                            _line["discount_val"] = st.number_input(
+                                "割引額（円）",
+                                min_value=0,
+                                value=_line.get("discount_val", 0),
+                                step=1000,
+                                key=f"inv_line_disc_val_{_li}"
+                            )
+                            _line["discount_amt"] = _line["discount_val"]
+                        else:
+                            _line["discount_val"] = st.number_input(
+                                "割引率（%）",
+                                min_value=0,
+                                max_value=100,
+                                value=_line.get("discount_val", 0),
+                                step=1,
+                                key=f"inv_line_disc_val_{_li}"
+                            )
+                            _line["discount_amt"] = int((_line["base"] + _line["incentive"]) * _line["discount_val"] / 100)
+
+                    _line_net = _line["base"] + _line["incentive"] - _line.get("discount_amt", 0)
+                    st.markdown(f"　小計（割引後）: **¥{_line_net:,}**")
+                    st.markdown("---")
+
+                if st.button("➕ 契約行を追加", key="inv_line_add"):
+                    st.session_state["inv_lines"].append({"type": "カスタム", "base": 0, "clicks": 0, "incentive": 0, "label": "サービス料"})
                     st.rerun()
 
                 _inv_remarks = st.text_area("備考", key="inv_remarks", height=80)
 
                 # ── 金額計算 ──────────────────────────────
-                _inv_incentive_total = sum(i["qty"] * i["price"] for i in st.session_state["inv_incentives"])
-                _inv_subtotal = _inv_base + _inv_incentive_total
+                _inv_subtotal = sum(_l["base"] + _l.get("incentive", 0) - _l.get("discount_amt", 0) for _l in st.session_state["inv_lines"])
+                _inv_base            = _inv_subtotal
+                _inv_incentive_total = 0
+                _inv_click_incentive = 0
+
                 _inv_tax = int(_inv_subtotal * _inv_tax_rate / 100)
                 _inv_total = _inv_subtotal + _inv_tax
 
@@ -24337,7 +24786,7 @@ Ys Consulting Office（以下「甲」という）と、本契約に同意した
                             "issuer_name":     _inv_issuer_name,
                             "invoice_no":      _inv_invoice_no,
                             "base_amount":     _inv_base,
-                            "incentives":      st.session_state["inv_incentives"],
+                            "incentives":      st.session_state["inv_lines"],
                             "subtotal":        _inv_subtotal,
                             "tax_rate":        _inv_tax_rate,
                             "tax_amount":      _inv_tax,
@@ -24349,12 +24798,22 @@ Ys Consulting Office（以下「甲」という）と、本契約に同意した
                         _inv_doc_id = st.session_state.get("inv_number", "").replace("/", "-") or _dt_inv_save.datetime.utcnow().strftime("%Y%m%d%H%M%S")
                         db.collection("invoices").document(_inv_doc_id).set(_inv_save_doc)
                         st.success(f"✅ 請求書を保存しました（{_inv_doc_id}）")
-
-                with col_sv2:
-                    if st.button("🖨️ 請求書を印刷・PDF出力", use_container_width=True, key="inv_print"):
-                        _inc_rows = "".join([
-                            f"<tr><td>{i['name']}</td><td style='text-align:right'>{i['qty']}</td><td style='text-align:right'>¥{i['price']:,}</td><td style='text-align:right'>¥{i['qty']*i['price']:,}</td></tr>"
-                            for i in st.session_state["inv_incentives"] if i["name"]
+                        _contract_rows = "".join([
+                            f"<tr>"
+                            f"<td>{_l['label']}</td>"
+                            f"<td style='text-align:right'>1</td>"
+                            f"<td style='text-align:right'>¥{_l['base']:,}</td>"
+                            f"<td style='text-align:right'>¥{_l['base']:,}</td>"
+                            f"</tr>"
+                            + (
+                                f"<tr><td>　└ クリックインセンティブ</td><td style='text-align:right'>1</td><td style='text-align:right'>¥{_l['incentive']:,}</td><td style='text-align:right'>¥{_l['incentive']:,}</td></tr>"
+                                if _l.get("incentive", 0) > 0 else ""
+                            )
+                            + (
+                                f"<tr style='color:#c00'><td>　└ 割引（{_l.get('discount_type','')}）</td><td style='text-align:right'>1</td><td style='text-align:right'>-¥{_l.get('discount_amt',0):,}</td><td style='text-align:right'>-¥{_l.get('discount_amt',0):,}</td></tr>"
+                                if _l.get("discount_amt", 0) > 0 else ""
+                            )
+                            for _l in st.session_state["inv_lines"]
                         ])
                         _inv_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>請求書</title>
 <style>
@@ -24366,6 +24825,7 @@ h1{{font-size:24px;text-align:center;margin-bottom:30px;border-bottom:2px solid 
 table{{width:100%;border-collapse:collapse;margin:20px 0;}}
 th{{background:#f0f0f0;border:1px solid #999;padding:8px;text-align:center;}}
 td{{border:1px solid #ccc;padding:8px;}}
+
 .total-table{{width:40%;margin-left:auto;margin-top:10px;}}
 .total-table td{{border:none;padding:4px 8px;}}
 .total-row{{font-weight:bold;font-size:15px;border-top:2px solid #000;}}
@@ -24377,6 +24837,11 @@ td{{border:1px solid #ccc;padding:8px;}}
 <div class="header">
 <div>
 <div class="to">{_inv_corp_sel_name} 御中</div>
+<div class="info">{f"〒{_inv_to_zip}" if _inv_to_zip else ""}</div>
+<div class="info">{_inv_to_addr}</div>
+<div class="info">{f"{_inv_to_dept}" if _inv_to_dept else ""}</div>
+<div class="info">{f"{_inv_to_contact} 様" if _inv_to_contact else ""}</div>
+<div class="info">{f"TEL: {_inv_to_tel}" if _inv_to_tel else ""}</div>
 <div class="info">請求書番号：{st.session_state.get('inv_number','')}</div>
 <div class="info">請求日：{str(_inv_date)}</div>
 <div class="info">支払期限：{str(_inv_due)}</div>
@@ -24394,8 +24859,7 @@ td{{border:1px solid #ccc;padding:8px;}}
 </div>
 <table>
 <tr><th>項目</th><th>数量</th><th>単価</th><th>金額</th></tr>
-<tr><td>顧問契約料（ASCENDサービス利用料）</td><td style="text-align:right">1</td><td style="text-align:right">¥{_inv_base:,}</td><td style="text-align:right">¥{_inv_base:,}</td></tr>
-{_inc_rows}
+{_contract_rows}
 </table>
 <table class="total-table">
 <tr><td>小計</td><td style="text-align:right">¥{_inv_subtotal:,}</td></tr>
@@ -25218,6 +25682,129 @@ push_signals_to_firestore(df_goal, df_watch, asof_date)
                         )
                     else:
                         st.warning(f"⚠️ {_pm_result['message']}")
+
+        elif admin_menu == "📢 広告管理":
+            st.subheader("📢 広告管理（業種別バナー設定）")
+
+            # ── テナント選択 ───────────────────────────────────────────
+            try:
+                _ad_tenant_docs = list(db.collection("tenants").stream())
+                _ad_tenant_ids = sorted([d.id for d in _ad_tenant_docs if d.id])
+            except Exception:
+                _ad_tenant_ids = []
+            if not _ad_tenant_ids:
+                _ad_tenant_ids = ["default"]
+            if "default" not in _ad_tenant_ids:
+                _ad_tenant_ids = ["default"] + _ad_tenant_ids
+
+            _ad_sel_tid = st.selectbox("対象業種（tenant）", _ad_tenant_ids, key="ad_sel_tid")
+
+            st.divider()
+            st.markdown("### ➕ 新規広告追加")
+
+            with st.form("ad_add_form"):
+                _ad_position = st.selectbox(
+                    "表示位置",
+                    ["sidebar", "mypage", "both"],
+                    format_func=lambda x: "① サイドバー下部 (240×160px)" if x == "sidebar" else ("③ マイページ RANK STATUS直下 (320×100px)" if x == "mypage" else "① ＋ ③ 両方"),
+                    key="ad_position_sel"
+                )
+                _ad_link_url = st.text_input("クリック先URL", placeholder="https://example.com", key="ad_link_url")
+                _ad_alt_text = st.text_input("代替テキスト（alt）", placeholder="広告の説明文", key="ad_alt_text")
+                _ad_image_file = st.file_uploader(
+                    "バナー画像 (.webp / .png / .jpg / .gif)",
+                    type=["webp", "png", "jpg", "jpeg", "gif"],
+                    key="ad_image_file"
+                )
+                _ad_is_active = st.checkbox("即時有効化", value=True, key="ad_is_active")
+                _ad_submit = st.form_submit_button("💾 広告を保存", type="primary", use_container_width=True)
+
+            if _ad_submit:
+                if not _ad_image_file:
+                    st.error("❌ 画像ファイルをアップロードしてください。")
+                elif not CENTRAL_BLOB_BUCKET:
+                    st.error("❌ CENTRAL_BLOB_BUCKET が未設定です。")
+                else:
+                    try:
+                        _ad_bytes = _ad_image_file.read()
+                        _ad_ext = _ad_image_file.name.rsplit(".", 1)[-1].lower()
+                        _ad_fname = f"ads/{_ad_sel_tid}/{_ad_position}/{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}.{_ad_ext}"
+                        _ad_mime = {
+                            "webp": "image/webp",
+                            "png":  "image/png",
+                            "jpg":  "image/jpeg",
+                            "jpeg": "image/jpeg",
+                            "gif":  "image/gif",
+                        }.get(_ad_ext, "application/octet-stream")
+                        _gcs_put_bytes(CENTRAL_BLOB_BUCKET, _ad_fname, _ad_bytes, _ad_mime)
+                        _ad_image_url = f"https://storage.googleapis.com/{CENTRAL_BLOB_BUCKET}/{_ad_fname}"
+
+                        _ad_positions = ["sidebar", "mypage"] if _ad_position == "both" else [_ad_position]
+                        for _ap in _ad_positions:
+                            _ad_doc = {
+                                "tenant_id":  _ad_sel_tid,
+                                "position":   _ap,
+                                "image_url":  _ad_image_url,
+                                "link_url":   _ad_link_url.strip(),
+                                "alt_text":   _ad_alt_text.strip(),
+                                "is_active":  _ad_is_active,
+                                "created_at": datetime.datetime.utcnow().isoformat(),
+                            }
+                            db.collection("ad_banners").document(_ad_sel_tid).collection("ads").add(_ad_doc)
+                        _pos_lbl = "サイドバー＋マイページ（両方）" if _ad_position == "both" else _ad_position
+                        st.success(f"✅ 広告を保存しました（{_ad_sel_tid} / {_pos_lbl}）")
+                        st.rerun()
+                    except Exception as _ad_e:
+                        st.error(f"❌ 保存エラー: {_ad_e}")
+
+            st.divider()
+            st.markdown("### 📋 登録済み広告一覧")
+            try:
+                _ad_docs_all = list(
+                    db.collection("ad_banners").document(_ad_sel_tid).collection("ads")
+                      .limit(50).stream()
+                )
+                _ad_items = [d.to_dict() | {"id": d.id} for d in _ad_docs_all]
+                _ad_items.sort(key=lambda x: str(x.get("created_at", "")), reverse=True)
+            except Exception:
+                _ad_items = []
+
+            if not _ad_items:
+                st.info("登録済み広告がありません。")
+            else:
+                for _adi in _ad_items:
+                    _adi_col1, _adi_col2, _adi_col3 = st.columns([3, 2, 1])
+                    with _adi_col1:
+                        _adi_pos_lbl = "サイドバー" if _adi.get("position") == "sidebar" else "マイページ"
+                        st.markdown(
+                            f"**{_adi_pos_lbl}** | "
+                            f"{'✅ 有効' if _adi.get('is_active') else '⏸ 停止'} | "
+                            f"{_adi.get('created_at','')[:10]}"
+                        )
+                        if _adi.get("image_url"):
+                            st.image(_adi["image_url"], width=200)
+                    with _adi_col2:
+                        st.caption(f"リンク: {_adi.get('link_url','')[:40]}")
+                        st.caption(f"alt: {_adi.get('alt_text','')[:30]}")
+                        _adi_total = _adi.get("click_total", 0)
+                        import datetime as _adt
+                        _adi_mkey = _adt.datetime.utcnow().strftime("%Y-%m")
+                        _adi_month = _adi.get(f"click_{_adi_mkey}", 0)
+                        st.caption(f"📊 総クリック: {_adi_total}件 ／ 今月: {_adi_month}件")
+                        _cur_active = _adi.get("is_active", False)
+                        if st.button(
+                            "⏸ 停止" if _cur_active else "▶️ 有効化",
+                            key=f"ad_toggle_{_adi['id']}"
+                        ):
+                            db.collection("ad_banners").document(_ad_sel_tid).collection("ads") \
+                              .document(_adi["id"]).update({"is_active": not _cur_active})
+                            st.rerun()
+                    with _adi_col3:
+                        if st.button("🗑️ 削除", key=f"ad_del_{_adi['id']}"):
+                            db.collection("ad_banners").document(_ad_sel_tid).collection("ads") \
+                              .document(_adi["id"]).delete()
+                            st.rerun()
+                    st.markdown("---")
 
 except Exception as e:
     st.error(f"物理エラー: {e}")
