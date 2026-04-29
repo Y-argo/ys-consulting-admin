@@ -116,16 +116,16 @@ FEATURE_REGISTRY = {
         "description": "固定概念スコア/レポート表示",
     },
     "ascend_ultra": {
-        "label": "⚡ ASCEND Ultra",
+        "label": "⚡ ADVANCE（高度）- gemini-2.5-pro",
         "category": "AIエンジン",
         "default_enabled": False,
-        "description": "高精度AIエンジン（Ultra）の使用許可",
+        "description": "高精度AIエンジン（ADVANCE）の使用許可",
     },
     "ascend_apex": {
-        "label": "🔱 ASCEND Apex",
+        "label": "🔱 SUPREME（至高）- gemini-3.0-pro",
         "category": "AIエンジン",
         "default_enabled": False,
-        "description": "最上位AIエンジン（Apex）の使用許可",
+        "description": "最上位AIエンジン（SUPREME）の使用許可",
     },
     "diag_structure": {
         "label": "🏗️ 構造診断",
@@ -175,6 +175,12 @@ FEATURE_REGISTRY = {
         "default_enabled": True,
         "description": "診断ページ：ファイル診断タブの表示",
     },
+    "diag_presentation": {
+        "label": "📊 プレゼン資料",
+        "category": "診断タブ",
+        "default_enabled": False,
+        "description": "診断ページ：プレゼン資料作成タブの表示（APEX/ULTRA限定）",
+    },
 }
 
 # カテゴリ別インデックス（管理UI表示順に使用）
@@ -184,7 +190,7 @@ FEATURE_CATEGORIES = {
     "生成": ["image_generation"],
     "分析": ["fixed_concept_report"],
     "AIエンジン": ["ascend_ultra", "ascend_apex"],
-    "診断タブ": ["diag_structure","diag_issue","diag_comparison","diag_contradiction","diag_execution","diag_investment","diag_graph","diag_file"],
+    "診断タブ": ["diag_structure","diag_issue","diag_comparison","diag_contradiction","diag_execution","diag_investment","diag_graph","diag_file","diag_presentation"],
 }
 
 SS_AUTH = "auth"
@@ -4490,6 +4496,11 @@ def upsert_doc_chunks(
     if _is_binaryish_text(content_text):
         return 0
 
+    # 全角スペース・連続スペース・連続改行を正規化（ODT等の表組みパディング対策）
+    content_text = content_text.replace("\u3000", " ")
+    content_text = re.sub(r" {2,}", " ", content_text)
+    content_text = re.sub(r"\n{3,}", "\n\n", content_text)
+    content_text = content_text.strip()
     chunks = _chunk_text(content_text, chunk_chars=chunk_chars, overlap=overlap)
     if not chunks:
         return 0
@@ -9865,7 +9876,7 @@ def load_usage_logs_df(limit: int = 3000) -> pd.DataFrame:
     rows = [l.to_dict() for l in logs]
     df = pd.DataFrame(rows)
     if "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
     if "is_admin_test" not in df.columns:
         df["is_admin_test"] = False
     if "tenant_id" not in df.columns:
@@ -9923,7 +9934,7 @@ def load_usage_logs_for_user_tenant(uid: str, tenant_id: str, limit: int = 200) 
     df = pd.DataFrame(rows)
     
     if "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
     if "is_admin_test" not in df.columns:
         df["is_admin_test"] = False
     if "prompt" not in df.columns:
@@ -9979,7 +9990,7 @@ def load_usage_logs_for_tenant(tenant_id: str, limit: int = 5000) -> pd.DataFram
     df = pd.DataFrame(rows)
 
     if "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
     if "prompt" not in df.columns:
         df["prompt"] = ""
     if "response" not in df.columns:
@@ -10088,7 +10099,7 @@ def customer_activity_summary(df_logs: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
         .rename(columns={"user_id": "uid"})
     )
-    g["last_action"] = pd.to_datetime(g["last_action"], errors="coerce")
+    g["last_action"] = pd.to_datetime(g["last_action"], errors="coerce", utc=True)
     return g.sort_values(["actions", "uid"], ascending=[False, True]).reset_index(drop=True)
 
 
@@ -11645,7 +11656,7 @@ def _build_attachment_knowledge(
     extra_meta: dict = None,
 ) -> dict:
     raw_text = (raw_text or "").strip()
-    text_preview = raw_text[:12000]
+    text_preview = raw_text  # 全文をLLMに渡す（切り捨てなし）
     extra_meta = extra_meta or {}
 
     sys_doc = "あなたは添付ファイルを中央倉庫の検索資産へ変換するエンジンです。余計な文章は禁止。出力はJSONのみ。"
@@ -11691,7 +11702,7 @@ def _build_attachment_knowledge(
             f"このファイルは {source_type} 形式の資料です。"
             f"{lead if lead else '本文抽出は限定的でした。'}"
         ).strip()
-    content = content[:12000]
+    # content上限撤廃（全文保持）
 
     if not ocr_text and source_type == "pdf":
         ocr_text = text_preview[:4000]
@@ -12186,7 +12197,7 @@ def ingest_attachment_to_central_knowledge(
             title=name,
             category=cat,
             source_type=source_type,
-            content_text=content,
+            content_text=raw_text,  # 全文からchunk作成
             chunk_chars=int(_central_rag.get("chunk_chars", 1200)),
             overlap=int(_central_rag.get("chunk_overlap", 200)),
         )
@@ -12196,8 +12207,9 @@ def ingest_attachment_to_central_knowledge(
             title=name,
             category=cat,
             source_ref=doc_id,
-            text=content,
+            text=raw_text,  # 全文からサマリー作成
         )
+        st.info(f"✅ チャンク数: {total_chunks}件 / 全文文字数: {len(raw_text)}文字 / サマリー生成完了")
 
         linked_tenants = list(prev_tenant_links)
         if tenant_id:
@@ -18248,6 +18260,33 @@ try:
                         st.rerun()
 
             st.divider()
+            st.write("### 既存業種の tenant_id 変更")
+            _chid_opts = {t["name"]: t["tenant_id"] for t in tenants}
+            _chid_sel_name = st.selectbox("変更対象（業種名）", list(_chid_opts.keys()), key="chid_name_sel")
+            _chid_old_tid = _chid_opts.get(_chid_sel_name, "")
+            st.caption(f"現在の tenant_id: `{_chid_old_tid}`")
+            _chid_new_tid = st.text_input("新しい tenant_id", value=_chid_old_tid, key="chid_new_tid_input")
+            if st.button("tenant_id を変更する", type="primary", use_container_width=True, key="chid_save_btn"):
+                _chid_new_s = _chid_new_tid.strip()
+                if not _chid_new_s:
+                    st.error("新しい tenant_id が必要です。")
+                elif _chid_new_s == _chid_old_tid:
+                    st.warning("tenant_id が変わっていません。")
+                else:
+                    try:
+                        _old_doc = tenants_col().document(_chid_old_tid).get()
+                        _old_data = _old_doc.to_dict() or {}
+                        _new_data = {**_old_data, "tenant_id": _chid_new_s}
+                        tenants_col().document(_chid_new_s).set(_new_data)
+                        _users_upd = _fs_stream_list(db.collection("users").where("tenant_id", "==", _chid_old_tid), limit=500)
+                        for _u in _users_upd:
+                            db.collection("users").document(_u.id).set({"tenant_id": _chid_new_s}, merge=True)
+                        tenants_col().document(_chid_old_tid).delete()
+                        st.success(f"tenant_id を「{_chid_old_tid}」→「{_chid_new_s}」に変更しました。（ユーザー {len(_users_upd)} 件更新済み）")
+                        st.rerun()
+                    except Exception as _chid_e:
+                        st.error(f"変更エラー: {_chid_e}")
+            st.divider()
             st.write("### 追加/更新")
             with st.form(key="tenant_upsert_form", clear_on_submit=False):
                 new_tid = st.text_input("tenant_id（英数字推奨）", value="")
@@ -18294,7 +18333,7 @@ try:
 
             df_view = df_users.merge(df_act, on=["uid", "tenant_id"], how="left")
             df_view["actions"] = (df_view["actions"].fillna(0).astype(int) if "actions" in df_view.columns else 0)
-            df_view["last_action"] = pd.to_datetime(df_view.get("last_action", None), errors="coerce")
+            df_view["last_action"] = pd.to_datetime(df_view["last_action"], errors="coerce", utc=True).dt.strftime("%Y-%m-%d %H:%M").fillna("")
 
             total_users = int(len(df_users))
             active_users = int(df_users["is_active"].sum()) if "is_active" in df_users.columns else 0
@@ -20444,7 +20483,6 @@ try:
                                 try:
                                     name = getattr(f, "name", "unknown")
                                     content_bytes = f.read()
-
                                     _ret = ingest_attachment_to_central_knowledge(
                                         name=name,
                                         content_bytes=content_bytes,
@@ -20453,7 +20491,6 @@ try:
                                         case_theme=str(cw_case_theme_files or ""),
                                         source_context="admin_central_upload",
                                     )
-
                                     if _ret.get("ok"):
                                         cw_proc_results.append(
                                             f"✅ {name}: 保存完了 / doc_id={_ret.get('doc_id','')} / "
@@ -20466,7 +20503,6 @@ try:
                                         )
                                 except Exception as e:
                                     cw_proc_errors.append(f"❌ {getattr(f, 'name', 'unknown')}: 例外 - {str(e)}")
-
                         st.success(f"処理完了: 成功 {len(cw_proc_results)}件 / 警告・失敗 {len(cw_proc_errors)}件")
                         with st.expander("📊 処理明細ログ"):
                             st.code("\n".join(cw_proc_results + cw_proc_errors), language="text")
@@ -21515,7 +21551,7 @@ try:
                     "tenant": "(全業種)",
                     "uid": "",
                     "exclude_str": "",
-                    "include_chat": True,
+                    "include_chat": False,
                 }
 
             _wr_applied = dict(st.session_state.get("wr_applied_filters", {}))
@@ -21547,7 +21583,7 @@ try:
 
                 wr_include_chat = st.checkbox(
                     "ランキング集計に chat_sessions（保存チャット）も含める",
-                    value=bool(_wr_applied.get("include_chat", True)),
+                    value=bool(_wr_applied.get("include_chat", False)),
                     key="wr_inc_chat",
                 )
 
@@ -21569,7 +21605,7 @@ try:
             wr_sel_tenant = str(_wr_cfg.get("tenant", "(全業種)") or "(全業種)")
             wr_uid_input = str(_wr_cfg.get("uid", "") or "").strip()
             wr_exclude_str = str(_wr_cfg.get("exclude_str", "") or "")
-            wr_include_chat = bool(_wr_cfg.get("include_chat", True))
+            wr_include_chat = bool(_wr_cfg.get("include_chat", False))
             wr_exclude = {w.strip().lower() for w in wr_exclude_str.split(",") if w.strip()}
 
             st.caption(
@@ -21663,20 +21699,6 @@ try:
                 st.dataframe(wdf_all, use_container_width=True)
             else:
                 st.info("データがありません。")
-            
-            st.write("### 🌐 全体ランキング (全業種・全ユーザー)")
-            dfs_all = []
-            df_all_logs = load_usage_logs_df(limit=8000)
-            if df_all_logs is not None and not df_all_logs.empty:
-                df_all_logs = df_all_logs[df_all_logs["is_admin_test"] != True]
-                dfs_all.append(word_ranking_df(df_all_logs, cols=["prompt"], top_n=30, exclude=wr_exclude))
-            msgs_all = load_all_chat_messages(limit=8000)
-            if msgs_all: dfs_all.append(word_ranking_from_chat_messages(msgs_all, top_n=30, exclude=wr_exclude))
-
-            if dfs_all:
-                wdf_all = merge_word_ranking(dfs_all).head(30)
-                st.dataframe(wdf_all, use_container_width=True)
-            else: st.info("データがありません。")
 
         elif admin_menu == "💬 テストチャット":
             st.subheader("管理者用テストチャット（非カウント）")
@@ -24294,21 +24316,21 @@ Ys Consulting Office（以下「甲」という）と、本契約に同意した
 <h2>第1条（定義）</h2>
 <p>1. 「本サービス」とは、甲が運営するAIコンサルティングプラットフォーム「ASCEND」をいう。</p>
 <p>2. 「利用プラン」とは、STARTER・STANDARD・PRO・APEX・ULTRAの5段階のサブスクリプションプランをいう。</p>
-<p>3. 「AIエンジン」とは、Core（Flash）・Ultra（2.5-Pro）・Apex（3.0）の各AI処理基盤をいう。</p>
+<p>3. 「AIエンジン」とは、SWIFT（Flash）・ADVANCE（2.5-Pro）・SUPREME（3.0）の各AI処理基盤をいう。</p>
 <p>4. 「テナント」とは、乙が本サービス上で利用する独立したデータ領域をいう。</p>
 
 <h2>第2条（サービス内容）</h2>
 <table>
 <tr><th>機能</th><th>STARTER</th><th>STANDARD</th><th>PRO</th><th>APEX</th><th>ULTRA</th></tr>
 <tr><td>月額料金</td><td>新規7日間 ¥0</td><td>¥9,800</td><td>¥39,800</td><td>¥89,800</td><td>¥300,000＋インセンティブ</td></tr>
-<tr><td>AIエンジン</td><td>Core</td><td>Core</td><td>Ultra</td><td>Apex</td><td>Apex</td></tr>
+<tr><td>AIエンジン</td><td>SWIFT</td><td>SWIFT</td><td>ADVANCE</td><td>SUPREME</td><td>SUPREME</td></tr>
 <tr><td>チャットモード数</td><td>1(auto)</td><td>7</td><td>19(全)</td><td>19(全)</td><td>19(全)</td></tr>
 <tr><td>RAG検索・レベルスコア</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
 <tr><td>画像生成・解析</td><td>—</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
 <tr><td>現状課題診断・Decision Metrics</td><td>—</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
-<tr><td>ファイル診断（Ultra使用）</td><td>—</td><td>—</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>ファイル診断（ADVANCE使用）</td><td>—</td><td>—</td><td>✓</td><td>✓</td><td>✓</td></tr>
 <tr><td>固定概念レポート・個人相談</td><td>—</td><td>—</td><td>✓</td><td>✓</td><td>✓</td></tr>
-<tr><td>投資シグナル・Apexエンジン</td><td>—</td><td>—</td><td>—</td><td>✓</td><td>✓（管理者）</td></tr>
+<tr><td>投資シグナル・SUPREMEエンジン</td><td>—</td><td>—</td><td>—</td><td>✓</td><td>✓（管理者）</td></tr>
 <tr><td>企業アカウント（最大10名）</td><td>—</td><td>—</td><td>—</td><td>—</td><td>✓</td></tr>
 <tr><td>顧問契約・月次戦術レポート</td><td>—</td><td>—</td><td>—</td><td>—</td><td>✓</td></tr>
 </table>
@@ -24922,7 +24944,7 @@ td{{border:1px solid #ccc;padding:8px;}}
 <h2>■ 契約プラン（ULTRA企業契約）</h2>
 <table>
 <tr><th>月額料金</th><td>¥300,000（税別）＋インセンティブ</td></tr>
-<tr><th>AIエンジン</th><td>Apex（最上位）</td></tr>
+<tr><th>AIエンジン</th><td>SUPREME（至高）</td></tr>
 <tr><th>アカウント数</th><td>最大10名（管理者1名＋メンバー9名）</td></tr>
 <tr><th>管理者権限</th><td>APEX相当（全機能解放）</td></tr>
 <tr><th>メンバー権限</th><td>PRO相当</td></tr>
