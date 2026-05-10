@@ -181,6 +181,18 @@ FEATURE_REGISTRY = {
         "default_enabled": False,
         "description": "診断ページ：プレゼン資料作成タブの表示（APEX/ULTRA限定）",
     },
+    "diag_future": {
+        "label": "🔮 未来分岐シミュレーター",
+        "category": "診断タブ",
+        "default_enabled": False,
+        "description": "診断page:未来分岐シミュレータータブの表示（APEX/ULTRA限定）",
+    },
+    "diag_profile": {
+        "label": "🧠 プロファイル生成",
+        "category": "診断タブ",
+        "default_enabled": False,
+        "description": "診断page:プロファイル生成タブの表示（APEX/ULTRA限定・許可制）",
+    },
 }
 
 # カテゴリ別インデックス（管理UI表示順に使用）
@@ -190,7 +202,7 @@ FEATURE_CATEGORIES = {
     "生成": ["image_generation"],
     "分析": ["fixed_concept_report"],
     "AIエンジン": ["ascend_ultra", "ascend_apex"],
-    "診断タブ": ["diag_structure","diag_issue","diag_comparison","diag_contradiction","diag_execution","diag_investment","diag_graph","diag_file","diag_presentation"],
+    "診断タブ": ["diag_structure","diag_issue","diag_comparison","diag_contradiction","diag_execution","diag_investment","diag_graph","diag_file","diag_presentation","diag_future","diag_profile"],
 }
 
 SS_AUTH = "auth"
@@ -1970,7 +1982,7 @@ def get_effective_feature_flags(uid: str, tenant_id: str = None) -> dict:
             "fixed_concept_report": False, "ascend_ultra": False, "ascend_apex": False,
             "image_gallery": False, "diag_structure": True, "diag_issue": True,
             "diag_comparison": True, "diag_contradiction": True, "diag_execution": True,
-            "diag_investment": False, "diag_graph": False, "diag_file": False,
+            "diag_investment": False, "diag_graph": False, "diag_file": False, "diag_future": False, "diag_profile": False,
         },
         "pro": {
             "image_generation": True, "personal_consulting": True,
@@ -1978,7 +1990,7 @@ def get_effective_feature_flags(uid: str, tenant_id: str = None) -> dict:
             "fixed_concept_report": True, "ascend_ultra": True, "ascend_apex": False,
             "image_gallery": True, "diag_structure": True, "diag_issue": True,
             "diag_comparison": True, "diag_contradiction": True, "diag_execution": True,
-            "diag_investment": False, "diag_graph": True, "diag_file": True,
+            "diag_investment": False, "diag_graph": True, "diag_file": True, "diag_future": False, "diag_profile": False,
         },
         "apex": {fid: True for fid in FEATURE_REGISTRY},
     }
