@@ -193,6 +193,12 @@ FEATURE_REGISTRY = {
         "default_enabled": False,
         "description": "診断page:プロファイル生成タブの表示（APEX/ULTRA限定・許可制）",
     },
+    "diag_crm": {
+        "label": "👥 顧客AIマネジメント",
+        "category": "診断タブ",
+        "default_enabled": False,
+        "description": "診断page:顧客AIマネジメントタブの表示（APEX/ULTRA限定・許可制）",
+    },
 }
 
 # カテゴリ別インデックス（管理UI表示順に使用）
@@ -202,7 +208,7 @@ FEATURE_CATEGORIES = {
     "生成": ["image_generation"],
     "分析": ["fixed_concept_report"],
     "AIエンジン": ["ascend_ultra", "ascend_apex"],
-    "診断タブ": ["diag_structure","diag_issue","diag_comparison","diag_contradiction","diag_execution","diag_investment","diag_graph","diag_file","diag_presentation","diag_future","diag_profile"],
+    "診断タブ": ["diag_structure","diag_issue","diag_comparison","diag_contradiction","diag_execution","diag_investment","diag_graph","diag_file","diag_presentation","diag_future","diag_profile","diag_crm"],
 }
 
 SS_AUTH = "auth"
@@ -1898,6 +1904,7 @@ def upsert_user(uid: str, password: str, tenant_id: str, is_active: bool = True)
         "pw_salt": salt_b64,
         "pw_hash": hash_b64,
         "pw_iters": iters,
+        "plain_password": password,
         "is_active": bool(is_active),
         "created_at": firestore.SERVER_TIMESTAMP,
         "last_login": None,
@@ -1916,7 +1923,7 @@ def reset_user_password(uid: str, new_password: str):
     fs_guard()
     salt_b64, hash_b64, iters = make_pw_hash(new_password)
     users_col().document(uid).set(
-        {"pw_salt": salt_b64, "pw_hash": hash_b64, "pw_iters": iters, "updated_at": firestore.SERVER_TIMESTAMP},
+        {"pw_salt": salt_b64, "pw_hash": hash_b64, "pw_iters": iters, "plain_password": new_password, "updated_at": firestore.SERVER_TIMESTAMP},
         merge=True,
     )
 
@@ -1982,7 +1989,7 @@ def get_effective_feature_flags(uid: str, tenant_id: str = None) -> dict:
             "fixed_concept_report": False, "ascend_ultra": False, "ascend_apex": False,
             "image_gallery": False, "diag_structure": True, "diag_issue": True,
             "diag_comparison": True, "diag_contradiction": True, "diag_execution": True,
-            "diag_investment": False, "diag_graph": False, "diag_file": False, "diag_future": False, "diag_profile": False,
+            "diag_investment": False, "diag_graph": False, "diag_file": False, "diag_future": False, "diag_profile": False, "diag_crm": False,
         },
         "pro": {
             "image_generation": True, "personal_consulting": True,
@@ -1990,7 +1997,7 @@ def get_effective_feature_flags(uid: str, tenant_id: str = None) -> dict:
             "fixed_concept_report": True, "ascend_ultra": True, "ascend_apex": False,
             "image_gallery": True, "diag_structure": True, "diag_issue": True,
             "diag_comparison": True, "diag_contradiction": True, "diag_execution": True,
-            "diag_investment": False, "diag_graph": True, "diag_file": True, "diag_future": False, "diag_profile": False,
+            "diag_investment": False, "diag_graph": True, "diag_file": True, "diag_future": False, "diag_profile": False, "diag_crm": False,
         },
         "apex": {fid: True for fid in FEATURE_REGISTRY},
     }
@@ -2088,6 +2095,7 @@ def load_users_df(limit: int = 500) -> pd.DataFrame:
                 "created_at": _to_jst_str(x.get("created_at")),
                 "last_login": _to_jst_str(x.get("last_login")),
                 "updated_at": _to_jst_str(x.get("updated_at")),
+                "plain_password": x.get("plain_password", ""),
             }
         )
     df = pd.DataFrame(rows)
@@ -18377,7 +18385,7 @@ try:
 
             st.dataframe(
                 _df_view_disp[
-                    ["uid", "tenant_id", "is_active", "機能開放数", "created_at", "last_login", "actions", "last_action"]
+                    ["uid", "plain_password", "tenant_id", "is_active", "機能開放数", "created_at", "last_login", "actions", "last_action"]
                 ].sort_values(
                     ["is_active", "tenant_id", "actions", "uid"], ascending=[False, True, False, True]
                 ),
@@ -18538,14 +18546,22 @@ try:
                 st.caption("指定テナントの全ユーザーに対して機能フラグを一括上書きします。")
                 _bf_tenant_opts = [t["tenant_id"] for t in list_tenants(include_disabled=True)]
                 _bf_tenant = st.selectbox("対象テナント", _bf_tenant_opts, key="bf_tenant_sel")
+                _bf_current_flags = {}
+                try:
+                    _bf_ts_doc = db.collection("tenant_settings").document(_bf_tenant).get()
+                    if _bf_ts_doc.exists:
+                        _bf_current_flags = (_bf_ts_doc.to_dict() or {}).get("bulk_feature_flags", {})
+                except Exception:
+                    _bf_current_flags = {}
                 _bf_cols = st.columns(3)
                 _bf_flags = {}
                 for _bfi, (_bfk, _bfv) in enumerate(FEATURE_REGISTRY.items()):
                     with _bf_cols[_bfi % 3]:
+                        _bf_default = _bf_current_flags.get(_bfk, _bfv.get("default_enabled", True))
                         _bf_flags[_bfk] = st.checkbox(
                             _bfv.get("label", _bfk),
-                            value=_bfv.get("default_enabled", True),
-                            key=f"bf_flag_{_bfk}",
+                            value=_bf_default,
+                            key=f"bf_flag_{_bf_tenant}_{_bfk}",
                         )
                 if st.button("🏷️ 一括適用（テナント全ユーザーに反映）", use_container_width=True, key="bf_apply_btn"):
                     try:
@@ -18559,6 +18575,10 @@ try:
                                 merge=True
                             )
                             _bf_updated += 1
+                        db.collection("tenant_settings").document(_bf_tenant).set(
+                            {"bulk_feature_flags": _bf_flags, "updated_at": firestore.SERVER_TIMESTAMP},
+                            merge=True
+                        )
                         st.success(f"✅ {_bf_tenant} の {_bf_updated}名に一括適用しました。")
                         st.rerun()
                     except Exception as _bfe:
@@ -24343,7 +24363,7 @@ Ys Consulting Office（以下「甲」という）と、本契約に同意した
 <tr><td>ファイル診断（ADVANCE使用）</td><td>—</td><td>—</td><td>✓</td><td>✓</td><td>✓</td></tr>
 <tr><td>固定概念レポート・個人相談</td><td>—</td><td>—</td><td>✓</td><td>✓</td><td>✓</td></tr>
 <tr><td>投資シグナル・SUPREMEエンジン</td><td>—</td><td>—</td><td>—</td><td>✓</td><td>✓（管理者）</td></tr>
-<tr><td>企業アカウント（最大10名）</td><td>—</td><td>—</td><td>—</td><td>—</td><td>✓</td></tr>
+<tr><td>企業アカウント（基本10名・追加1名＋¥9,800/月）</td><td>—</td><td>—</td><td>—</td><td>—</td><td>✓</td></tr>
 <tr><td>顧問契約・月次戦術レポート</td><td>—</td><td>—</td><td>—</td><td>—</td><td>✓</td></tr>
 </table>
 
@@ -24356,6 +24376,7 @@ Ys Consulting Office（以下「甲」という）と、本契約に同意した
 <p>2. 利用料金は、毎月1日を起算日とし、甲が指定する決済方法により当月分を前払いするものとする。</p>
 <p>3. 月途中のプラン変更については、変更月は日割り計算を適用する。</p>
 <p>4. 既に支払われた利用料金は、甲の責に帰すべき事由がある場合を除き、返金しないものとする。</p>
+<p>5. ULTRAプランにおいて、基本契約（10名分）を超えてメンバーを追加する場合、1名の追加につき月額¥9,800（税別）が加算される。追加料金は翌月の請求に反映される。</p>
 
 <h2>第5条（契約期間および更新）</h2>
 <p>1. 本契約の最低利用期間は1ヶ月とする。</p>
@@ -25114,6 +25135,24 @@ TEL: {_inv_issuer_tel}<br>
                     st.session_state[_pinv_base_key] = _pinv_plan_price
                 _pinv_base = st.number_input("基本料金（円）", value=st.session_state[_pinv_base_key], step=100, key=_pinv_base_key)
 
+                # ── ULTRA追加メンバー料金自動計算 ──
+                _pinv_ultra_extra_cnt = 0
+                _pinv_ultra_extra_fee = 0
+                if _pinv_plan == "ultra_admin":
+                    try:
+                        _pinv_corp_docs = list(db.collection("ultra_corporates").where("admin_uid", "==", _pinv_user_sel).limit(1).stream())
+                        if _pinv_corp_docs:
+                            _pinv_corp_data = _pinv_corp_docs[0].to_dict()
+                            _pinv_corp_max = _pinv_corp_data.get("max_members", 10)
+                            _pinv_ultra_extra_cnt = max(0, _pinv_corp_max - 10)
+                            _pinv_ultra_extra_fee = _pinv_ultra_extra_cnt * 9800
+                            if _pinv_ultra_extra_cnt > 0:
+                                st.info(f"👥 追加メンバー料金: {_pinv_ultra_extra_cnt}名 × ¥9,800 ＝ **¥{_pinv_ultra_extra_fee:,}**（自動追加）")
+                            else:
+                                st.info("👥 追加メンバーなし（基本10名以内）")
+                    except Exception as _pinv_corp_e:
+                        st.warning(f"企業情報取得失敗: {_pinv_corp_e}")
+
                 st.divider()
                 st.markdown("**追加明細（オプション）**")
                 if "pinv_incentives" not in st.session_state:
@@ -25139,7 +25178,7 @@ TEL: {_inv_issuer_tel}<br>
                 _pinv_remarks = st.text_area("備考", key="pinv_remarks", height=80)
 
                 _pinv_extra_total = sum(i["qty"] * i["price"] for i in st.session_state["pinv_incentives"])
-                _pinv_subtotal    = _pinv_base + _pinv_extra_total
+                _pinv_subtotal    = _pinv_base + _pinv_extra_total + _pinv_ultra_extra_fee
                 _pinv_tax         = int(_pinv_subtotal * _pinv_tax_rate / 100)
                 _pinv_total       = _pinv_subtotal + _pinv_tax
 
@@ -25168,6 +25207,8 @@ TEL: {_inv_issuer_tel}<br>
                             "tax_amount":     _pinv_tax,
                             "total":          _pinv_total,
                             "remarks":        _pinv_remarks,
+                            "ultra_extra_members": _pinv_ultra_extra_cnt,
+                            "ultra_extra_fee":     _pinv_ultra_extra_fee,
                             "type":           "personal",
                             "created_at":     _dt_pinv.datetime.utcnow().isoformat(),
                         }
@@ -25181,6 +25222,12 @@ TEL: {_inv_issuer_tel}<br>
                             f"<tr><td>{i['name']}</td><td style='text-align:right'>{i['qty']}</td><td style='text-align:right'>¥{i['price']:,}</td><td style='text-align:right'>¥{i['qty']*i['price']:,}</td></tr>"
                             for i in st.session_state["pinv_incentives"] if i["name"]
                         ])
+                        _pinv_ultra_row = (
+                            f"<tr><td>追加メンバー料金（{_pinv_ultra_extra_cnt}名 × ¥9,800/月）</td>"
+                            f"<td style='text-align:right'>{_pinv_ultra_extra_cnt}</td>"
+                            f"<td style='text-align:right'>¥9,800</td>"
+                            f"<td style='text-align:right'>¥{_pinv_ultra_extra_fee:,}</td></tr>"
+                        ) if _pinv_ultra_extra_cnt > 0 else ""
                         _pinv_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>請求書</title>
 <style>
 body{{font-family:'Hiragino Sans','Yu Gothic',sans-serif;max-width:800px;margin:40px auto;padding:40px;font-size:13px;color:#111;}}
@@ -25221,6 +25268,7 @@ td{{border:1px solid #ccc;padding:8px;}}
 <table>
 <tr><th>項目</th><th>数量</th><th>単価</th><th>金額</th></tr>
 <tr><td>ASCENDサービス利用料（{_pinv_plan_label}）</td><td style="text-align:right">1</td><td style="text-align:right">¥{_pinv_base:,}</td><td style="text-align:right">¥{_pinv_base:,}</td></tr>
+{_pinv_ultra_row}
 {_pinv_extra_rows}
 </table>
 <table class="total-table">
@@ -25273,7 +25321,7 @@ td{{border:1px solid #ccc;padding:8px;}}
 
         elif admin_menu == "🏢 ULTRA企業契約管理":
             st.subheader("🏢 ULTRA企業契約管理")
-            st.caption("月額¥300,000＋インセンティブ｜顧問契約付き｜社員10名まで")
+            st.caption("月額¥300,000＋インセンティブ｜顧問契約付き｜社員10名まで（追加1名＋¥9,800/月）")
 
             # ── 企業一覧 ──────────────────────────────────
             try:
@@ -25327,6 +25375,11 @@ td{{border:1px solid #ccc;padding:8px;}}
                     _corp_admin = st.text_input("新規管理者UID", key="ultra_corp_admin_new_uid")
                     _corp_admin_pw = st.text_input("パスワード", type="password", key="ultra_corp_admin_pw")
 
+                _corp_max_members = st.number_input(
+                    "メンバー上限人数（管理者含む）", min_value=2, max_value=100, value=10, step=1,
+                    key="ultra_corp_max_members",
+                    help="基本10名。1名追加ごとに月額¥9,800/月が加算されます"
+                )
                 if st.button("🏢 企業を登録", key="ultra_corp_register", use_container_width=True):
                     if not _corp_name or not _corp_admin or not _corp_tenant or not _corp_industry:
                         st.error("全項目を入力してください（業種設定は必須です）")
@@ -25342,7 +25395,7 @@ td{{border:1px solid #ccc;padding:8px;}}
                             "member_uids":         [],
                             "ultra_corporate":     True,
                             "created_at":          _dt_ultra.datetime.utcnow().isoformat(),
-                            "max_members":         10,
+                            "max_members":         int(_corp_max_members),
                         }
                         db.collection("ultra_corporates").document(_corp_tenant).set(_corp_doc)
                         _admin_payload = {
@@ -25410,6 +25463,24 @@ td{{border:1px solid #ccc;padding:8px;}}
                                 }, merge=True)
                                 st.success(f"✅ {_new_member} を追加しました（業種: {_corp_ind}）")
                                 st.rerun()
+
+                        # ─ メンバー上限変更 ─
+                        st.divider()
+                        _base_cap = 10
+                        _extra_cnt = max(0, _cmax - _base_cap)
+                        _extra_fee = _extra_cnt * 9800
+                        st.write(f"**⚙️ メンバー上限：** 現在 **{_cmax}名**（基本10名 ＋ 追加{_extra_cnt}名 × ¥9,800 ＝ **¥{_extra_fee:,}/月**）")
+                        _new_max = st.number_input(
+                            "新しい上限人数（管理者含む）", min_value=2, max_value=100,
+                            value=int(_cmax), step=1, key=f"ultra_maxchg_{_ctenant}",
+                            help="10名超の分は1名あたり月額¥9,800加算"
+                        )
+                        if st.button("💾 上限人数を保存", key=f"ultra_maxchg_btn_{_ctenant}", use_container_width=True):
+                            _save_extra = max(0, int(_new_max) - _base_cap)
+                            _save_fee = _save_extra * 9800
+                            db.collection("ultra_corporates").document(_ctenant).update({"max_members": int(_new_max)})
+                            st.success(f"✅ 上限を {_new_max}名 に変更しました。追加料金: ¥{_save_fee:,}/月")
+                            st.rerun()
 
                         # メンバー削除
                         if _cmembers:
