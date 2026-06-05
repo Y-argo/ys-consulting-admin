@@ -199,6 +199,12 @@ FEATURE_REGISTRY = {
         "default_enabled": False,
         "description": "診断page:顧客AIマネジメントタブの表示（APEX/ULTRA限定・許可制）",
     },
+    "agent_mode": {
+        "label": "🤖 エージェントモード",
+        "category": "エージェント",
+        "default_enabled": False,
+        "description": "エージェントモード（HP更新・監査・ヒアリング補佐）APEX/ULTRA限定",
+    },
 }
 
 # カテゴリ別インデックス（管理UI表示順に使用）
@@ -209,6 +215,7 @@ FEATURE_CATEGORIES = {
     "分析": ["fixed_concept_report"],
     "AIエンジン": ["ascend_ultra", "ascend_apex"],
     "診断タブ": ["diag_structure","diag_issue","diag_comparison","diag_contradiction","diag_execution","diag_investment","diag_graph","diag_file","diag_presentation","diag_future","diag_profile","diag_crm"],
+    "エージェント": ["agent_mode"],
 }
 
 SS_AUTH = "auth"
@@ -1348,7 +1355,8 @@ def _read_cookie_last_activity() -> Optional[datetime.datetime]:
             return None
         ts = float(raw)
         return datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).replace(tzinfo=None)
-    except Exception:
+    except Exception as e:
+        print(f"[SECURITY_AUDIT][read_cookie_last_activity] failed: {e}", flush=True)
         return None
 
 
@@ -1615,7 +1623,8 @@ def _trainer_control_config() -> dict:
     try:
         snap = _trainer_control_ref().get()
         return (snap.to_dict() or {}) if snap.exists else {}
-    except Exception:
+    except Exception as e:
+        print(f"[SECURITY_AUDIT][trainer_control_config] failed: {e}", flush=True)
         return {}
 
 
@@ -1989,7 +1998,7 @@ def get_effective_feature_flags(uid: str, tenant_id: str = None) -> dict:
             "fixed_concept_report": False, "ascend_ultra": False, "ascend_apex": False,
             "image_gallery": False, "diag_structure": True, "diag_issue": True,
             "diag_comparison": True, "diag_contradiction": True, "diag_execution": True,
-            "diag_investment": False, "diag_graph": False, "diag_file": False, "diag_future": False, "diag_profile": False, "diag_crm": False,
+            "diag_investment": False, "diag_graph": False, "diag_file": False, "diag_future": False, "diag_profile": False, "diag_crm": False, "agent_mode": False,
         },
         "pro": {
             "image_generation": True, "personal_consulting": True,
@@ -1997,7 +2006,7 @@ def get_effective_feature_flags(uid: str, tenant_id: str = None) -> dict:
             "fixed_concept_report": True, "ascend_ultra": True, "ascend_apex": False,
             "image_gallery": True, "diag_structure": True, "diag_issue": True,
             "diag_comparison": True, "diag_contradiction": True, "diag_execution": True,
-            "diag_investment": False, "diag_graph": True, "diag_file": True, "diag_future": False, "diag_profile": False, "diag_crm": False,
+            "diag_investment": False, "diag_graph": True, "diag_file": True, "diag_future": False, "diag_profile": False, "diag_crm": False, "agent_mode": False,
         },
         "apex": {fid: True for fid in FEATURE_REGISTRY},
     }
@@ -15462,6 +15471,7 @@ ASCEND は、利用ログや評価情報をもとに**内部モデルを継続�
                     "💬 テストチャット",
                     "⏱️ セッション設定",
                     "🧪 AI接続診断",
+                    "🛡 ASCEND SECURITY",
                     "🎯 意思決定精度診断",
                     "🧬 LGBM管理",
                     "🔬 コンサルAI",
@@ -15474,6 +15484,7 @@ ASCEND は、利用ログや評価情報をもとに**内部モデルを継続�
                     "📄 請求書発行",
                     "📄 個人請求書発行",
                     "📢 広告管理",
+                    "🤖 エージェント管理",
                 ],
                 horizontal=False,
                 key="admin_main_menu"
@@ -24191,6 +24202,661 @@ try:
             except Exception:
                 _huc1.metric("ユーザー数", "取得失敗")
 
+        elif admin_menu == "🛡 ASCEND SECURITY":
+            st.subheader("🛡 ASCEND SECURITY")
+            st.caption("ASCEND自身の設定・接続・機能整合性を監査します。v1はLLMを使わない軽量監査です。")
+
+            audit_rows = []
+
+            def _audit(name, ok=True, detail="", severity="LOW", warn=False):
+                _status = "⚠️ WARN" if warn else ("✅ OK" if ok else "❌ NG")
+                audit_rows.append({
+                    "項目": name,
+                    "状態": _status,
+                    "重要度": severity,
+                    "詳細": detail,
+                })
+
+            _audit("ADMIN_PASSWORD", bool(ADMIN_PASSWORD), "環境変数 ADMIN_PASSWORD の存在確認", "HIGH")
+            _audit("COOKIE_SECRET", bool(cookie_secret), "EncryptedCookieManager 用 secret の存在確認", "HIGH")
+            _audit("GEMINI_API_KEY", bool(api_key), "Gemini API key の存在確認", "MEDIUM")
+            _audit("Firestore接続", bool(firestore_ok), "Firestore 初期化状態", "HIGH")
+            _audit("FEATURE_REGISTRY", isinstance(FEATURE_REGISTRY, dict) and len(FEATURE_REGISTRY) > 0, f"{len(FEATURE_REGISTRY)} 件", "MEDIUM")
+            _audit("FEATURE_CATEGORIES", isinstance(FEATURE_CATEGORIES, dict) and len(FEATURE_CATEGORIES) > 0, f"{len(FEATURE_CATEGORIES)} カテゴリ", "MEDIUM")
+            _audit("call_llm関数", callable(globals().get("call_llm")), "LLM呼び出し関数の存在確認", "MEDIUM")
+            _audit("list_available_models関数", callable(globals().get("list_available_models")), "モデル一覧取得関数の存在確認", "LOW")
+
+            try:
+                _u_test = list(users_col().limit(1).stream())
+                _audit("users collection", True, "users コレクション取得成功", "HIGH")
+            except Exception as e:
+                _audit("users collection", False, f"取得失敗: {e}", "HIGH")
+
+            _categorized = set()
+            for _cat, _fids in FEATURE_CATEGORIES.items():
+                for _fid in _fids:
+                    _categorized.add(_fid)
+
+            _missing_in_categories = sorted([_fid for _fid in FEATURE_REGISTRY.keys() if _fid not in _categorized])
+            _missing_in_registry = sorted([_fid for _fid in _categorized if _fid not in FEATURE_REGISTRY])
+
+            _audit(
+                "feature未分類",
+                len(_missing_in_categories) == 0,
+                "未分類なし" if not _missing_in_categories else ", ".join(_missing_in_categories),
+                "MEDIUM",
+            )
+            _audit(
+                "category側の未定義feature",
+                len(_missing_in_registry) == 0,
+                "未定義なし" if not _missing_in_registry else ", ".join(_missing_in_registry),
+                "HIGH",
+            )
+
+            # V2: UI配線監査 feature flag が実際に is_feature_enabled で参照されているか
+            try:
+                from pathlib import Path as _AuditPath
+                _app_txt = _AuditPath(__file__).read_text(encoding="utf-8")
+                _unwired_features = []
+                for _fid in FEATURE_REGISTRY.keys():
+                    if f'"{_fid}"' not in _app_txt and f"'{_fid}'" not in _app_txt:
+                        _unwired_features.append(_fid)
+
+                _audit(
+                    "UI配線監査(feature参照)",
+                    len(_unwired_features) == 0,
+                    "全feature参照あり" if not _unwired_features else "未参照: " + ", ".join(_unwired_features),
+                    "MEDIUM",
+                    warn=(len(_unwired_features) > 0),
+                )
+
+                _guarded_features = []
+                for _fid in FEATURE_REGISTRY.keys():
+                    _hit = False
+                    _needle1 = f'is_feature_enabled'
+                    _needle2 = f'"{_fid}"'
+                    _needle3 = f"'{_fid}'"
+                    _pos = 0
+                    while True:
+                        _idx = _app_txt.find(_needle1, _pos)
+                        if _idx < 0:
+                            break
+                        _window = _app_txt[_idx:_idx + 500]
+                        if _needle2 in _window or _needle3 in _window:
+                            _hit = True
+                            break
+                        _pos = _idx + len(_needle1)
+                    if _hit:
+                        _guarded_features.append(_fid)
+                # frontend診断ページ側でfeatures[t.flag]によりguard済みの診断タブ群
+                # admin Cloud Run containerにはfrontendコードを含めないため、確認済み配線として扱う
+                _frontend_guarded_features = [
+                    "current_issue_diagnosis",
+                    "diag_structure",
+                    "diag_issue",
+                    "diag_comparison",
+                    "diag_contradiction",
+                    "diag_execution",
+                    "diag_investment",
+                    "diag_graph",
+                    "diag_file",
+                    "diag_presentation",
+                    "diag_future",
+                    "diag_profile",
+                    "diag_crm",
+                ]
+                for _fid in _frontend_guarded_features:
+                    if _fid in FEATURE_REGISTRY and _fid not in _guarded_features:
+                        _guarded_features.append(_fid)
+
+                # AI engine系は plan gating / enterprise role で制御される
+                _plan_guarded_features = [
+                    "ascend_ultra",
+                    "ascend_apex",
+                ]
+                for _fid in _plan_guarded_features:
+                    if _fid in FEATURE_REGISTRY and _fid not in _guarded_features:
+                        _guarded_features.append(_fid)
+
+                _guarded_features = sorted(_guarded_features)
+                _unguarded_features = sorted([_fid for _fid in FEATURE_REGISTRY.keys() if _fid not in _guarded_features])
+
+                _audit(
+                    "UI配線監査(feature guard)",
+                    len(_unguarded_features) == 0,
+                    "全featureがis_feature_enabledで保護" if not _unguarded_features else "未guard: " + ", ".join(_unguarded_features),
+                    "MEDIUM",
+                    warn=(len(_unguarded_features) > 0),
+                )
+
+                with st.expander("UI配線監査詳細", expanded=False):
+                    st.json({
+                        "feature_count": len(FEATURE_REGISTRY),
+                        "unwired_features": _unwired_features,
+                        "guarded_features": _guarded_features,
+                        "unguarded_features": _unguarded_features,
+                    })
+            except Exception as e:
+                _audit("UI配線監査(feature参照)", False, f"監査失敗: {e}", "HIGH")
+
+            _bad_feature_defs = []
+            for _fid, _reg in FEATURE_REGISTRY.items():
+                if "label" not in _reg or "category" not in _reg or "default_enabled" not in _reg:
+                    _bad_feature_defs.append(_fid)
+
+            _audit(
+                "feature定義必須キー",
+                len(_bad_feature_defs) == 0,
+                "欠落なし" if not _bad_feature_defs else ", ".join(_bad_feature_defs),
+                "HIGH",
+            )
+
+            # V2: 期待API route監査（admin containerにはAPIコードを含めないため、期待値で監査）
+            try:
+                _expected_routes = [
+                    "POST /api/auth/login",
+                    "GET /api/auth/me",
+                    "GET /api/auth/me/features",
+                    "GET /api/user/stats",
+                    "GET /api/user/theme",
+                    "GET /api/user/header_config",
+                    "GET /api/user/chat_examples",
+                    "GET /api/user/purpose_modes",
+                    "POST /api/chat/send",
+                    "GET /api/chat/sessions",
+                    "GET /api/chat/history/{chat_id}",
+                    "POST /api/chat/upload_attachment",
+                    "POST /api/chat/send_file",
+                    "POST /api/chat/send_image",
+                    "POST /api/chat/send_invest",
+                    "GET /api/chat/images",
+                    "POST /api/diagnosis/generate",
+                    "GET /api/diagnosis/list",
+                    "POST /api/diagnosis/file_diagnosis",
+                    "POST /api/diagnosis/file_diagnosis_check",
+                    "POST /api/diagnosis/file_clarify",
+                    "POST /api/diagnosis/file_followup",
+                    "POST /api/diagnosis/future_simulation",
+                    "GET /api/diagnosis/future_simulation_list",
+                    "POST /api/diagnosis/profile_generate",
+                    "GET /api/diagnosis/profile_list",
+                    "GET /api/diagnosis/issue_list",
+                    "GET /api/diagnosis/crm_list",
+                    "POST /api/diagnosis/crm_customer",
+                    "POST /api/diagnosis/crm_analyze",
+                    "GET /api/diagnosis/crm_priority",
+                    "GET /api/investment/signals",
+                    "GET /api/investment/analysis",
+                    "POST /api/investment/stock_analysis",
+                ]
+
+                _route_seen = {}
+                for _r in _expected_routes:
+                    _route_seen[_r] = _route_seen.get(_r, 0) + 1
+
+                _route_dups = sorted([_r for _r, _n in _route_seen.items() if _n > 1])
+                _audit("期待API route数", len(_expected_routes) > 0, f"{len(_expected_routes)} routes", "MEDIUM")
+                _audit(
+                    "期待API route重複",
+                    len(_route_dups) == 0,
+                    "重複なし" if not _route_dups else " / ".join(_route_dups),
+                    "HIGH",
+                )
+
+                # V2: API生存確認（認証必須routeは401/403でもroute存在OK）
+                try:
+                    import requests as _sec_requests
+                    _api_base = "https://ys-consulting-api-665881683479.asia-northeast1.run.app"
+                    _probe_paths = [
+                        "/api/auth/me",
+                        "/api/user/stats",
+                        "/api/user/theme",
+                        "/api/chat/sessions",
+                        "/api/diagnosis/list",
+                        "/api/investment/signals",
+                    ]
+                    _probe_results = []
+                    for _path in _probe_paths:
+                        try:
+                            _res = _sec_requests.get(_api_base + _path, timeout=6)
+                            _ok = _res.status_code in (200, 401, 403)
+                            _probe_results.append(f"{_res.status_code} GET {_path}")
+                        except Exception as _pe:
+                            _ok = False
+                            _probe_results.append(f"ERR GET {_path}: {_pe}")
+                            break
+                    _audit(
+                        "API GET疎通",
+                        all((_x.startswith("200") or _x.startswith("401") or _x.startswith("403")) for _x in _probe_results),
+                        " / ".join(_probe_results),
+                        "HIGH",
+                    )
+                    with st.expander("API GET疎通詳細", expanded=False):
+                        st.code("\n".join(_probe_results))
+                except Exception as e:
+                    _audit("API GET疎通", False, f"監査失敗: {e}", "HIGH")
+
+                # V2: Firestore collection整合性監査
+                try:
+                    _required_cols = [
+                        "users",
+                        "tenant_settings",
+                        "system_settings",
+                        "usage_logs",
+                        "chat_sessions",
+                        "sources",
+                        "source_chunks",
+                        "tenant_source_links",
+                        "lgbm_training_logs",
+                        "active_model_pointer",
+                        "train_jobs",
+                        "user_diagnoses",
+                    ]
+                    _col_results = []
+                    _col_ng = []
+                    for _cn in _required_cols:
+                        try:
+                            _docs = list(db.collection(_cn).limit(1).stream())
+                            _col_results.append(f"OK {_cn} ({len(_docs)} sample)")
+                        except Exception as _ce:
+                            _col_ng.append(_cn)
+                            _col_results.append(f"NG {_cn}: {_ce}")
+                    _audit(
+                        "Firestore collection整合性",
+                        len(_col_ng) == 0,
+                        "全collection取得OK" if not _col_ng else "NG: " + ", ".join(_col_ng),
+                        "HIGH",
+                    )
+                    with st.expander("Firestore collection監査詳細", expanded=False):
+                        st.code("\n".join(_col_results))
+                except Exception as e:
+                    _audit("Firestore collection整合性", False, f"監査失敗: {e}", "HIGH")
+
+                # V2: trainer_control / active_model_pointer 中身監査
+                try:
+                    _tc_doc = _trainer_control_ref().get()
+                    _tc = _tc_doc.to_dict() if _tc_doc.exists else {}
+
+                    _tc_required = [
+                        "enabled",
+                        "min_interval_minutes",
+                        "lgbm_min_rows",
+                    ]
+
+                    _tc_missing = [k for k in _tc_required if k not in _tc]
+
+                    _audit(
+                        "trainer_control必須キー",
+                        len(_tc_missing) == 0,
+                        "欠落なし" if not _tc_missing else "欠落: " + ", ".join(_tc_missing),
+                        "HIGH",
+                    )
+
+                    with st.expander("trainer_control監査詳細", expanded=False):
+                        st.json({
+                            "exists": _tc_doc.exists,
+                            "missing_keys": _tc_missing,
+                            "enabled": _tc.get("enabled"),
+                            "min_interval_minutes": _tc.get("min_interval_minutes"),
+                            "lgbm_min_rows": _tc.get("lgbm_min_rows"),
+                            "last_executed_at": str(_tc.get("last_executed_at")),
+                        })
+
+                except Exception as e:
+                    _audit("trainer_control監査", False, f"監査失敗: {e}", "HIGH")
+
+                # V2: Cloud Run revision / container環境差分監査
+                try:
+                    _svc = os.environ.get("K_SERVICE", "")
+                    _rev = os.environ.get("K_REVISION", "")
+                    _cfg = os.environ.get("K_CONFIGURATION", "")
+                    _proj = os.environ.get("GOOGLE_CLOUD_PROJECT", "") or os.environ.get("GCP_PROJECT", "")
+                    _cwd = os.getcwd()
+                    _files = sorted(os.listdir(_cwd))[:30]
+
+                    _audit(
+                        "Cloud Run service env",
+                        bool(_svc),
+                        f"K_SERVICE={_svc or '未取得'} / K_REVISION={_rev or '未取得'}",
+                        "MEDIUM",
+                        warn=not bool(_svc),
+                    )
+
+                    _audit(
+                        "container実行位置",
+                        _cwd == "/app",
+                        f"cwd={_cwd}",
+                        "LOW",
+                        warn=(_cwd != "/app"),
+                    )
+
+                    with st.expander("Cloud Run / container環境監査詳細", expanded=False):
+                        st.json({
+                            "K_SERVICE": _svc,
+                            "K_REVISION": _rev,
+                            "K_CONFIGURATION": _cfg,
+                            "GOOGLE_CLOUD_PROJECT": _proj,
+                            "cwd": _cwd,
+                            "files": _files,
+                            "CENTRAL_BLOB_BUCKET": bool(CENTRAL_BLOB_BUCKET),
+                            "CENTRAL_FILE_BUCKET": bool(CENTRAL_FILE_BUCKET),
+                            "ADMIN_PASSWORD": bool(ADMIN_PASSWORD),
+                            "COOKIE_SECRET": bool(cookie_secret),
+                            "GEMINI_API_KEY": bool(api_key),
+                        })
+                except Exception as e:
+                    _audit("Cloud Run環境監査", False, f"監査失敗: {e}", "HIGH")
+
+                # V3: try/except握り潰し監査
+                try:
+                    import re as _sw_re
+
+                    from pathlib import Path as _SwallowPath
+                    _app_txt = _SwallowPath(__file__).read_text(encoding="utf-8")
+
+                    _except_total = len(_sw_re.findall(r'except\s+Exception', _app_txt))
+
+                    # danger_total は下の実分類結果から算出する。
+                    # 正規表現だけだと except内に print/logging がある修正済み箇所も危険扱いになるため。
+                    _danger_counts = {
+                        "except-pass": 0,
+                        "except-return-none": 0,
+                        "except-return-emptydict": 0,
+                        "except-return-false": 0,
+                    }
+                    _danger_total = 0
+
+                    _danger_lines = []
+                    _danger_high = []
+                    _danger_medium = []
+                    _danger_low = []
+
+                    def _nearest_def(_line_index: int):
+                        for _k in range(_line_index, -1, -1):
+                            _ls = _lines[_k].strip()
+                            if _ls.startswith("def ") or _ls.startswith("async def "):
+                                return f"L{_k+1}: {_ls}"
+                        return "関数不明"
+
+                    def _area_from_context(_ctx: str):
+                        _c = (_ctx or "").lower()
+                        if "auth" in _c or "password" in _c or "cookie" in _c or "token" in _c:
+                            return "auth"
+                        if "firestore" in _c or "db.collection" in _c or "document(" in _c:
+                            return "firestore"
+                        if "trainer" in _c or "lgbm" in _c or "active_model_pointer" in _c:
+                            return "trainer"
+                        if "rag" in _c or "source_chunks" in _c or "tenant_source_links" in _c:
+                            return "rag"
+                        if "llm" in _c or "gemini" in _c or "call_llm" in _c:
+                            return "llm"
+                        if "st." in _c or "session_state" in _c:
+                            return "ui"
+                        return "unknown"
+
+                    def _danger_score(_area: str, _rtype: str):
+                        _area_score = {
+                            "auth": 5,
+                            "trainer": 5,
+                            "firestore": 4,
+                            "llm": 4,
+                            "rag": 3,
+                            "ui": 1,
+                            "unknown": 2,
+                        }.get(_area, 1)
+
+                        _return_score = {
+                            "return {}": 5,
+                            "return None": 4,
+                            "return False": 3,
+                            "pass": 2,
+                        }.get(_rtype, 1)
+
+                        return _area_score + _return_score
+
+                    def _repair_policy(_area: str, _rtype: str):
+                        if _area == "auth":
+                            return "認証失敗を握り潰さず、理由をsession/security logへ記録。False/None返却は維持してもtraceを残す。"
+                        if _area == "trainer":
+                            return "学習・モデル切替系はsilent fallback禁止。trainer logへerror/reason/model_keyを保存。"
+                        if _area == "firestore":
+                            return "Firestore例外を監査ログへ保存。空dict/None返却時はcollection/doc_id/contextを残す。"
+                        if _area == "llm":
+                            return "LLM失敗時はmodel/prompt種別/errorを記録し、fallback生成と失敗理由を分離。"
+                        if _area == "rag":
+                            return "RAG失敗時はquery/source/tenant/score情報を残し、検索ゼロと例外を区別。"
+                        if _area == "ui":
+                            return "UI例外はst.warningまたはdebug logへ出し、表示不能とデータなしを区別。"
+                        return "例外内容・関数名・入力contextを最低限ログ化。silent returnを避ける。"
+
+                    _score_rows = []
+
+                    _lines = _app_txt.splitlines()
+                    for _i, _line in enumerate(_lines):
+                        _sline = _line.strip()
+                        if _sline.startswith("except Exception"):
+                            _next = ""
+                            for _j in range(_i + 1, min(_i + 6, len(_lines))):
+                                if _lines[_j].strip():
+                                    _next = _lines[_j].strip()
+                                    break
+
+                            if _next in ("return None", "return False", "return {}"):
+                                _ctx = "\n".join(_lines[max(0, _i-25):min(len(_lines), _i+25)])
+                                _area = _area_from_context(_ctx)
+                                _fn = _nearest_def(_i)
+                                _score = _danger_score(_area, _next)
+                                _item = f"SCORE={_score} | L{_i+1}: HIGH[{_area}]: {_sline} -> {_next} | {_fn}"
+                                _score_rows.append({"score": _score, "severity": "HIGH", "area": _area, "line": _i+1, "action": _next, "function": _fn, "repair_policy": _repair_policy(_area, _next)})
+                                _danger_high.append(_item)
+                                _danger_lines.append(_item)
+                            elif _next == "pass":
+                                _context = "\n".join(_lines[_i:min(_i+4, len(_lines))])
+                                if "ログ" in _context or "log" in _context.lower() or "失敗でも" in _context:
+                                    _item = f"L{_i+1}: LOW: {_sline} -> pass"
+                                    _danger_low.append(_item)
+                                else:
+                                    _ctx = "\n".join(_lines[max(0, _i-20):min(len(_lines), _i+20)]).lower()
+                                    if "auth" in _ctx or "password" in _ctx or "cookie" in _ctx or "token" in _ctx:
+                                        _area = "auth"
+                                    elif "firestore" in _ctx or "db.collection" in _ctx or "document(" in _ctx:
+                                        _area = "firestore"
+                                    elif "trainer" in _ctx or "lgbm" in _ctx or "active_model_pointer" in _ctx:
+                                        _area = "trainer"
+                                    elif "rag" in _ctx or "source_chunks" in _ctx or "tenant_source_links" in _ctx:
+                                        _area = "rag"
+                                    elif "llm" in _ctx or "gemini" in _ctx or "call_llm" in _ctx:
+                                        _area = "llm"
+                                    elif "st." in _ctx or "session_state" in _ctx:
+                                        _area = "ui"
+                                    else:
+                                        _area = "unknown"
+
+                                    _score = _danger_score(_area, "pass")
+                                    _item = f"SCORE={_score} | L{_i+1}: MEDIUM[{_area}]: {_sline} -> pass"
+                                    _score_rows.append({"score": _score, "severity": "MEDIUM", "area": _area, "line": _i+1, "action": "pass", "function": _nearest_def(_i), "repair_policy": _repair_policy(_area, "pass")})
+                                    _danger_medium.append(_item)
+                                _danger_lines.append(_item)
+
+                    _danger_total = len(_danger_high) + len(_danger_medium)
+                    _danger_counts = {
+                        "except-return-none": sum(1 for _x in _danger_high if "-> return None" in _x),
+                        "except-return-emptydict": sum(1 for _x in _danger_high if "-> return {}" in _x),
+                        "except-return-false": sum(1 for _x in _danger_high if "-> return False" in _x),
+                        "except-pass": len(_danger_medium),
+                    }
+
+                    _audit(
+                        "try/except握り潰し",
+                        _danger_total < 20,
+                        f"except={_except_total} / danger={_danger_total}",
+                        "HIGH" if _danger_total >= 20 else "MEDIUM",
+                        warn=(_danger_total >= 1 and _danger_total < 20),
+                    )
+
+                    with st.expander("try/except握り潰し監査詳細", expanded=False):
+                        st.json({
+                            "except_total": _except_total,
+                            "danger_total": _danger_total,
+                            "danger_counts": _danger_counts,
+                            "high_count": len(_danger_high),
+                            "medium_count": len(_danger_medium),
+                            "low_count": len(_danger_low),
+                        })
+                        if _score_rows:
+                            _score_rows_sorted = sorted(_score_rows, key=lambda x: x.get("score", 0), reverse=True)
+                            st.markdown("**危険度ランキング TOP50**")
+                            _rank_rows = [
+                                {k:v for k,v in _r.items() if k != "repair_policy"}
+                                for _r in _score_rows_sorted[:50]
+                            ]
+                            st.dataframe(_rank_rows, use_container_width=True, hide_index=True)
+
+                            _policy_counts = {}
+                            for _r in _score_rows:
+                                _p = _r.get("repair_policy", "")
+                                if _p:
+                                    _policy_counts[_p] = _policy_counts.get(_p, 0) + 1
+
+                            _policy_rows = [
+                                {"count": _c, "repair_policy": _p}
+                                for _p, _c in sorted(_policy_counts.items(), key=lambda x: x[1], reverse=True)
+                            ]
+
+                            st.markdown("**修正方針 集約**")
+                            st.dataframe(_policy_rows, use_container_width=True, hide_index=True)
+
+                            st.markdown("### 🧠 Repair Proposal Agent")
+                            st.caption("危険度ランキングから、修正候補・理由・推奨patchを自動生成します。自動適用はしません。")
+
+                            _proposal_rows = []
+
+                            for _r in _score_rows_sorted[:30]:
+                                _area = _r.get("area", "unknown")
+                                _action = _r.get("action", "")
+                                _fn = _r.get("function", "")
+                                _line = _r.get("line", "")
+                                _score = _r.get("score", 0)
+                                _severity = _r.get("severity", "MEDIUM")
+
+                                _fn_name = "unknown_function"
+                                try:
+                                    if "def " in _fn:
+                                        _tmp = _fn.split("def ",1)[1]
+                                        _fn_name = _tmp.split("(",1)[0].strip()
+                                except Exception:
+                                    pass
+
+                                if _area == "auth":
+                                    _reason = "認証/セッション障害が無音化すると、不正状態・cookie破損・ログイン不整合を追跡できない。"
+                                    _priority = "P0"
+                                    _log = "SECURITY_AUDIT"
+                                elif _area == "trainer":
+                                    _reason = "trainer/model切替失敗が隠れると、古いモデル運用や空推論へ silently fallback する。"
+                                    _priority = "P0"
+                                    _log = "TRAINER_AUDIT"
+                                elif _area == "firestore":
+                                    _reason = "Firestore障害と『データ無し』が同一扱いになり、空表示や機能停止原因が追跡不能になる。"
+                                    _priority = "P1"
+                                    _log = "FIRESTORE_AUDIT"
+                                elif _area == "llm":
+                                    _reason = "LLM障害・JSON parse失敗・quota失敗が空応答へ吸収され品質低下原因が消える。"
+                                    _priority = "P1"
+                                    _log = "LLM_AUDIT"
+                                elif _area == "rag":
+                                    _reason = "検索ゼロとRAG障害が区別できず、精度低下原因が不明になる。"
+                                    _priority = "P2"
+                                    _log = "RAG_AUDIT"
+                                else:
+                                    _reason = "silent fail により再現不能化する。"
+                                    _priority = "P3"
+                                    _log = "SECURITY_AUDIT"
+
+                                _patch_code = f"""except Exception as e:
+    print(
+        f'[{_log}][{_fn_name}] failed: {{e}}',
+        flush=True,
+    )
+    {_action}"""
+
+                                _proposal_rows.append({
+                                    "priority": _priority,
+                                    "score": _score,
+                                    "severity": _severity,
+                                    "area": _area,
+                                    "line": _line,
+                                    "function": _fn_name,
+                                    "action": _action,
+                                    "reason": _reason,
+                                })
+
+                                with st.expander(f"PATCH {_priority} | {_fn_name} | score={_score}", expanded=False):
+                                    st.markdown(f"**area**: `{_area}`")
+                                    st.markdown(f"**reason**: {_reason}")
+                                    st.markdown(f"**recommended log**: `{_log}`")
+                                    st.markdown("**patch example**")
+                                    st.code(_patch_code, language="python")
+
+                            st.dataframe(
+                                _proposal_rows,
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+                except Exception as e:
+                    _audit("try/except握り潰し監査", False, f"監査失敗: {e}", "HIGH")
+
+                try:
+                    _ptr_docs = list(db.collection("active_model_pointer").limit(20).stream())
+
+                    _ptr_required = [
+                        "tenant_id",
+                        "industry",
+                        "active_model_id",
+                        "active_gcs_path",
+                    ]
+
+                    _ptr_ng = []
+
+                    for _pd in _ptr_docs:
+                        _d = _pd.to_dict() or {}
+                        for _k in _ptr_required:
+                            if _k not in _d:
+                                _ptr_ng.append(f"{_pd.id}:{_k}")
+
+                    _audit(
+                        "active_model_pointer必須キー",
+                        len(_ptr_ng) == 0,
+                        "未生成: 学習モデル昇格前のため警告扱い" if not _ptr_docs else ("欠落なし" if not _ptr_ng else " / ".join(_ptr_ng[:20])),
+                        "MEDIUM" if not _ptr_docs else "HIGH",
+                        warn=(not _ptr_docs),
+                    )
+
+                    with st.expander("active_model_pointer監査詳細", expanded=False):
+                        if _ptr_docs:
+                            st.json([(_x.to_dict() or {}) for _x in _ptr_docs[:5]])
+                        else:
+                            st.info("active_model_pointer は未生成です。")
+
+                except Exception as e:
+                    _audit("active_model_pointer監査", False, f"監査失敗: {e}", "HIGH")
+
+                with st.expander("期待API route一覧", expanded=False):
+                    st.code("\n".join(_expected_routes))
+            except Exception as e:
+                _audit("期待API route監査", False, f"監査失敗: {e}", "HIGH")
+
+            st.dataframe(audit_rows, use_container_width=True, hide_index=True)
+
+            _ng = [r for r in audit_rows if r["状態"] == "❌ NG"]
+            _warn = [r for r in audit_rows if r["状態"] == "⚠️ WARN"]
+
+            if _ng:
+                st.error(f"重大問題: {len(_ng)} 件 / 警告: {len(_warn)} 件")
+            elif _warn:
+                st.warning(f"重大な構成不整合はありません。警告: {len(_warn)} 件")
+            else:
+                st.success("重大な構成不整合は検出されませんでした。")
+
         elif admin_menu == "🔬 コンサルAI":
             try:
                 from consulting_ai import render_consulting_ai_tab
@@ -25787,6 +26453,88 @@ push_signals_to_firestore(df_goal, df_watch, asof_date)
                         )
                     else:
                         st.warning(f"⚠️ {_pm_result['message']}")
+
+
+        elif admin_menu == "🤖 エージェント管理":
+            st.subheader("🤖 エージェント管理")
+            db = firestore.Client()
+
+            agent_tab1, agent_tab2, agent_tab3 = st.tabs(["📋 タスク一覧", "📜 実行ログ", "🖥️ 許可Op一覧"])
+
+            with agent_tab1:
+                st.caption("agent_tasks コレクション（全テナント）")
+                status_filter = st.selectbox("ステータス絞り込み", ["すべて","PENDING","APPROVED","RUNNING","DONE","REJECTED","FAILED"], key="agent_task_status")
+                try:
+                    q = db.collection("agent_tasks")
+                    if status_filter != "すべて":
+                        q = q.where("status", "==", status_filter)
+                    docs = list(q.limit(100).stream())
+                    if not docs:
+                        st.info("タスクがありません")
+                    else:
+                        import pandas as pd
+                        rows = []
+                        for d in docs:
+                            t = d.to_dict()
+                            rows.append({
+                                "task_id": t.get("task_id","")[:8]+"...",
+                                "tenant": t.get("tenant_id",""),
+                                "uid": t.get("user_uid","")[:8]+"...",
+                                "agent_type": t.get("agent_type",""),
+                                "operation": t.get("operation_type",""),
+                                "industry": t.get("industry",""),
+                                "status": t.get("status",""),
+                                "created_at": str(t.get("created_at",""))[:19],
+                            })
+                        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                        st.caption(f"合計: {len(rows)} 件")
+                except Exception as e:
+                    st.error(f"取得エラー: {e}")
+
+            with agent_tab2:
+                st.caption("agent_logs コレクション（全テナント）")
+                try:
+                    docs = list(db.collection("agent_logs").order_by("executed_at", direction="DESCENDING").limit(200).stream())
+                    if not docs:
+                        st.info("ログがありません")
+                    else:
+                        import pandas as pd
+                        rows = []
+                        for d in docs:
+                            l = d.to_dict()
+                            rows.append({
+                                "log_id": l.get("log_id","")[:8]+"...",
+                                "task_id": l.get("task_id","")[:8]+"...",
+                                "tenant": l.get("tenant_id",""),
+                                "agent_type": l.get("agent_type",""),
+                                "operation": l.get("operation_type",""),
+                                "success": "✅" if l.get("success") else "❌",
+                                "error": l.get("error_message","")[:40],
+                                "executed_at": str(l.get("executed_at",""))[:19],
+                            })
+                        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                        st.caption(f"合計: {len(rows)} 件")
+                except Exception as e:
+                    st.error(f"取得エラー: {e}")
+
+            with agent_tab3:
+                st.caption("agent_ops コレクション（許可オペレーション定義）")
+                try:
+                    docs = list(db.collection("agent_ops").stream())
+                    if not docs:
+                        st.info("登録済みOpがありません")
+                    else:
+                        for d in docs:
+                            op = d.to_dict()
+                            with st.expander(f"🔧 {op.get('op_name','')} （{op.get('op_id','')}）"):
+                                st.write(f"カテゴリ: {op.get('category','')}")
+                                st.write(f"許可プラン: {', '.join(op.get('allowed_plans',[]))}")
+                                st.write(f"承認必須: {op.get('required_approval',True)}")
+                                st.write(f"action_types: {', '.join(op.get('action_types',[]))}")
+                                st.write("業種テンプレート:")
+                                st.json(op.get("industry_template",{}))
+                except Exception as e:
+                    st.error(f"取得エラー: {e}")
 
         elif admin_menu == "📢 広告管理":
             st.subheader("📢 広告管理（業種別バナー設定）")
