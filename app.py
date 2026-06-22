@@ -1211,7 +1211,7 @@ _admin_from_pages = bool(st.session_state.pop("_ascend_is_admin_page", False))
 # 2) 現在のURL / パスから毎回再判定（sticky化しない）
 _page = _qp_get_first("page", "").lower()
 _admin_from_qp = (_page == "admin")
-_admin_from_path = _is_admin_path()
+_admin_from_path = _is_admin_path()  or bool(os.environ.get("IS_ADMIN_APP"))
 
 # 3) ★ rerun をまたいで管理判定を維持するための sticky フラグを読み戻す
 #    _admin_from_pages は1回消費で消えるため、以降の rerun では
@@ -11125,7 +11125,8 @@ def save_decision_metrics(
             "source_diagnosis_id":     str(source_diagnosis_id),
         })
         return doc_ref.id
-    except Exception:
+    except Exception as _e:
+        print(f"[save_weekly_report ERROR] {_e}")
         return None
 
 def load_latest_decision_metrics(user_id: str) -> Optional[dict]:
@@ -11383,7 +11384,7 @@ def list_available_models() -> List[str]:
 
 # ── モデル優先リスト（Flash = 作業層 / Pro = 判定層）──────────────────────
 _FLASH_PREFERRED = [
-    "gemini-2.0-flash",
+    "gemini-2.5-flash",
     "gemini-2.0-flash-latest",
     "gemini-1.5-flash",
     "gemini-1.5-flash-latest",
@@ -11451,7 +11452,7 @@ def _call_llm_inner(
 
     cfg = types.GenerateContentConfig(
         system_instruction=sys,
-        max_output_tokens=2048,
+        max_output_tokens=8192,
         temperature=_temperature,
     )
 
@@ -13008,7 +13009,8 @@ def save_weekly_report(
             "created_at": firestore.SERVER_TIMESTAMP,
         })
         return doc_ref.id
-    except Exception:
+    except Exception as _e:
+        print(f"[save_weekly_report ERROR] {_e}")
         return None
 
 def load_weekly_reports(
@@ -13025,13 +13027,12 @@ def load_weekly_reports(
         q = _weekly_reports_col().where("tenant_id", "==", tenant_id)
         if target_uid:
             q = q.where("target_uid", "==", target_uid)
-        docs = list(
-            q.order_by("created_at", direction=firestore.Query.DESCENDING)
-            .limit(limit)
-            .stream()
-        )
-        return [{"doc_id": d.id, **(d.to_dict() or {})} for d in docs]
-    except Exception:
+        docs = list(q.limit(limit).stream())
+        result = [{'doc_id': d.id, **(d.to_dict() or {})} for d in docs]
+        result.sort(key=lambda x: x.get('created_at') or '', reverse=True)
+        return result
+    except Exception as _e:
+        print(f"[load_weekly_reports ERROR] {_e}")
         return []
 
 def build_weekly_context(
@@ -19960,7 +19961,55 @@ try:
                     _rtype = _r.get("report_type", "")
                     _ruid  = _r.get("target_uid", "")
                     with st.expander(f"📄 [{_rtype}] {_label} / {_ruid} （保存: {_ts_str}）", expanded=False):
-                        st.markdown(_r.get("report_md", "（内容なし）"))
+                        _rmd = _r.get('report_md', '（内容なし）')
+                        _rdid = _r.get('doc_id', '')
+                        _bc1, _bc2, _bc3 = st.columns([1, 1, 1])
+                        with _bc1:
+                            st.download_button(
+                                '📥 MDダウンロード',
+                                data=_rmd.encode('utf-8'),
+                                file_name=f'report_{_label}_{_ruid}.md',
+                                mime='text/markdown',
+                                key=f'dl_{_rdid}',
+                                use_container_width=True,
+                            )
+                        with _bc2:
+                            import markdown as _md_lib
+                            _md_css = (
+                                "body{font-family:'Hiragino Sans','Yu Gothic',sans-serif;"
+                                "max-width:800px;margin:40px auto;padding:40px;font-size:14px;color:#111;line-height:1.9;}"
+                                "h1{font-size:22px;border-bottom:2px solid #333;padding-bottom:8px;margin-top:32px;}"
+                                "h2{font-size:18px;border-left:4px solid #555;padding-left:10px;margin-top:28px;}"
+                                "h3{font-size:15px;color:#444;margin-top:20px;}"
+                                "h4{font-size:14px;color:#555;margin-top:16px;}"
+                                "strong{color:#111;}ul{padding-left:20px;}li{margin:4px 0;}"
+                                "hr{border:none;border-top:1px solid #ccc;margin:24px 0;}"
+                                "p{margin:8px 0;}@media print{body{padding:20px;margin:0;}}"
+                            )
+                            _html_body = _md_lib.markdown(_rmd, extensions=["extra"])
+                            _html_content = (
+                                '<html><head><meta charset="utf-8"><title>ASCEND レポート</title>'
+                                '<style>' + _md_css + '</style></head><body>'
+                                + _html_body + '</body></html>'
+                            )
+                            st.download_button(
+                                '🖨️ HTML(印刷用)DL',
+                                data=_html_content.encode('utf-8'),
+                                file_name=f'report_{_label}_{_ruid}.html',
+                                mime='text/html',
+                                key=f'html_{_rdid}',
+                                use_container_width=True,
+                            )
+                        with _bc3:
+                            if st.button('🗑️ 削除', key=f'del_{_rdid}', type='secondary', use_container_width=True):
+                                try:
+                                    db.collection('weekly_reports').document(_rdid).delete()
+                                    st.session_state['arc_reports_cache'] = [r for r in st.session_state.get('arc_reports_cache', []) if r.get('doc_id') != _rdid]
+                                    st.success('削除しました')
+                                    st.rerun()
+                                except Exception as _de:
+                                    st.error(f'削除エラー: {_de}')
+                        st.markdown(_rmd)
             elif st.session_state.get("arc_reports_cache") is not None:
                 st.info("該当レポートがありません。")
 

@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.log
+api/
+frontend/
+deploy/
+deploy_build/
+node_modules/
+.next/
